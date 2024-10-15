@@ -1,0 +1,571 @@
+---
+title: "Parcial-apr_maq_grb"
+output: html_document
+date: "2024-10-12"
+---
+```{r, echo=FALSE, include=FALSE}
+library(tidymodels)
+library(tidyverse)
+library(keras)
+library(caret)
+library(tensorflow)
+library(reticulate)
+use_python("/Users/gerardorochabenigno/miniforge3/envs/py_tf/bin/python", required = TRUE)
+
+log_loss_function <- function(pred, obs){
+  # Se calcula la pérdida logarítmica
+  log_loss <- -1 * mean(obs * log(pred) + (1 - obs) * log(1 - pred))
+  log_loss
+}
+
+```
+
+# 1. Definición del problema
+
+Contamos con el siguiente problema de clasificación: 
+ - A partir de un conjunto de datos que contiene reservas de hotel en resorts y en ciudades queremos predecir si la reserva contiene niños o no.
+ 
+Métrica de evaluación:
+ - Pérdida logarítmica
+ 
+# 2. Información
+
+La información proviene de "Hotel booking demand datasets" con procesamiento previo. El conjunto de datos original contiene informacon de reservas de hotel en de tipo "ciudad" y "resort". Cada observación representa una reserva de hotel con fecha de ingreso entre el 1 de julio de 2015 y el 31 de agosto de 2017 y contiene reservas que se efectuaron, omitiendo aquellas que se cancelaron. 
+
+A continuación se describen las variables disponibles en el conjunto de datos disponible:
+
+ - `hotel`: Tipo de hotel (Resort Hotel o City Hotel): Los registros de Resort Hotel provienen de la zona de Algarve y los registros de City Hotel provienen de la ciudad de Lisboa
+ - `lead_time`: Número de días que transcurren entre la fecha de la reserva y la fecha de llegada.
+ - `stays_in_weekend_nights`: Número de noches de fin de semana (Sábado o domingo),
+ - `stays_in_week_nights`: Número de noches entre semana (Lunes a viernes),
+ - `adults`: Número de adultos
+ - `children`: Indica si la reserva contiene niños (children) o no (none) 
+ - `meal`: Tipo de comida reservada BB – Bed & Breakfast; HB – Half board (breakfast and one other meal – usually dinner); FB – Full board (breakfast, lunch and dinner)
+ - `country`: País de origen.
+ - `market_segment`: Segmento de mercado Agencia de viajes (Online_TA), Corporate, Operadores de Tours (Online_TO), Direct, Groups, Complementary o Aviation.
+ - `distribution_channel`: Canal de distribución Agencia de viajes u Operadores de Tours (TA/TO), Corporate, Direct, Groups, Undefined o GDS.
+ - `is_repeated_guest`: Indica si el huésped es repetido (1) o no (0)
+ - `previous_cancellations`: Número de reservaciones previas canceladas
+ - `previous_bookings_not_canceled`: Número de reservaciones previas no canceladas
+ - `reserved_room_type`: Tipo de habitación reservada (A a L)
+ - `assigned_room_type`: Tipo de habitación asignada (A a K)
+ - `booking_changes`: Número de cambios en la reserva antes de entrar al Property Management System (PMS) 
+ - `deposit_type`: Tipo de depósito No Deposit – no deposit was made; Non Refund – a deposit was made in the value of the total stay cost; Refundable – a deposit was made with a value under the total cost of stay.
+ - `agent`: ID de la agencia de viajes
+ - `company`: ID de la compañía
+ - `days_in_waiting_list`: Número de días en lista de espera antes de ser confirmada la reserva.
+ - `customer_type`: Tipo de cliente Contract - when the booking has an allotment or other type of contract associated to it; Group – when the booking is associated to a group; Transient – when the booking is not part of a group or contract, and is not associated to other transient booking; Transient-party – when the booking is transient, but is associated to at least other transient booking
+ - `average_daily_rate`: Tarifa diaria promedio
+ - `required_car_parking_spaces`: Indica si en la reserva se solicitaron espacios de estacionamiento (parking) o no (none)
+ - `total_of_special_requests`: Número de solicitudes especiales hechas por el cliente
+ - `arrival_date`: Fecha de llegada
+ 
+ Target:
+  - `children`
+
+```{r}
+# Leemos la información
+raw_test  <- read_csv("./datos/hoteles-prueba.csv", show_col_types = FALSE)
+raw_train <- read_csv("./datos/hoteles-entrena.csv", show_col_types = FALSE)
+```
+
+## 2.1 Vistazo a la información
+
+```{r}
+# Tipo de hotel
+raw_train |> select(hotel) |> summarise(hotel_pr = round( n()/nrow(raw_train),5), .by=hotel)
+# Cantidad de niños
+raw_train |> select(children) |> summarise(children_pr = round(n()/nrow(raw_train),5), .by=children)
+# Tipo de comida
+raw_train |> select(meal) |> summarise(meal_pr = round(n()/nrow(raw_train),5), .by=meal)
+# País de origen
+raw_train |> select(country) |> summarise(country_pr = round(n()/nrow(raw_train),5), .by=country)
+# Segmento de mercado
+raw_train |> select(market_segment) |> summarise(market_segment_pr = round(n()/nrow(raw_train),5), .by=market_segment)
+# Canal de distribución
+raw_train |> select(distribution_channel) |> summarise(distribution_channel_pr = round(n()/nrow(raw_train),5), .by=distribution_channel)
+# El huésped es repetido
+raw_train |> select(is_repeated_guest) |> summarise(is_repeated_guest_pr = round(n()/nrow(raw_train),5), .by=is_repeated_guest)
+# Número de reservaciones previas canceladas
+raw_train |> select(previous_cancellations) |> summarise(previous_cancellations_pr = round(n()/nrow(raw_train),5), .by=previous_cancellations)
+# Número de reservaciones previas no canceladas
+raw_train |> select(previous_bookings_not_canceled) |> summarise(previous_bookings_not_canceled_pr = round(n()/nrow(raw_train),5), .by=previous_bookings_not_canceled)
+# Tipo de habitación reservada
+raw_train |> select(reserved_room_type) |> summarise(reserved_room_type_pr = round(n()/nrow(raw_train),5), .by=reserved_room_type)
+# Tipo de habitación asignada
+raw_train |> select(assigned_room_type) |> summarise(assigned_room_type_pr = round(n()/nrow(raw_train),5), .by=assigned_room_type)
+# Número de cambios en la reserva
+raw_train |> select(booking_changes) |> summarise(booking_changes_pr = round(n()/nrow(raw_train),5), .by=booking_changes)
+# Tipo de depósito
+raw_train |> select(deposit_type) |> summarise(deposit_type_pr = round(n()/nrow(raw_train),5), .by=deposit_type)
+# TIpo de cliente
+raw_train |> select(customer_type) |> summarise(customer_type_pr = round(n()/nrow(raw_train),5), .by=customer_type)
+# Espacios de estacionamiento
+raw_train |> select(required_car_parking_spaces) |> summarise(required_car_parking_spaces_pr = round(n()/nrow(raw_train),5), .by=required_car_parking_spaces)
+# Número de solicitudes especiales
+raw_train |> select(total_of_special_requests) |> summarise(total_of_special_requests_pr = round(n()/nrow(raw_train),5), .by=total_of_special_requests)
+# numero de aultos  
+raw_train |> select(adults) |> summarise(adults_pr = round(n()/nrow(raw_train),5), .by=adults)
+# lead time
+raw_train |> select(lead_time) |> 
+  summarise(lead_time_av = mean(lead_time), lead_time_sd = sd(lead_time), lead_time = "lead_time") |> pivot_longer(cols = c(lead_time_av, lead_time_sd), values_to = "lead_time_pr")
+# Número de noches de fin de semana
+raw_train |> select(stays_in_weekend_nights) |> 
+  summarise(stays_in_weekend_nights_av = mean(stays_in_weekend_nights), stays_in_weekend_nights_sd = sd(stays_in_weekend_nights), stays_in_weekend_nights = "stays_in_weekend_nights") |> pivot_longer(cols = c(stays_in_weekend_nights_av, stays_in_weekend_nights_sd), values_to = "stays_in_weekend_nights_pr")
+# Número de noches entre semana
+raw_train |> select(stays_in_week_nights) |> 
+  summarise(stays_in_week_nights_av = mean(stays_in_week_nights), stays_in_week_nights_sd = sd(stays_in_week_nights), stays_in_week_nights = "stays_in_week_nights") |> pivot_longer(cols = c(stays_in_week_nights_av, stays_in_week_nights_sd), values_to = "stays_in_week_nights_pr")
+# days_in_waiting_list
+raw_train |> select(days_in_waiting_list) |> 
+  summarise(days_in_waiting_list_av = mean(days_in_waiting_list), days_in_waiting_list_sd = sd(days_in_waiting_list), days_in_waiting_list = "days_in_waiting_list") |> pivot_longer(cols = c(days_in_waiting_list_av, days_in_waiting_list_sd), values_to = "days_in_waiting_list_pr")
+# average_daily_rate
+raw_train |> select(average_daily_rate) |> 
+  summarise(average_daily_rate_av = mean(average_daily_rate), average_daily_rate_sd = sd(average_daily_rate), average_daily_rate = "average_daily_rate") |> pivot_longer(cols = c(average_daily_rate_av, average_daily_rate_sd), values_to = "average_daily_rate_pr")
+# ID de la agencia de viajes (con faltantes)
+raw_train |> select(agent) |> summarise(agent_pr = round(n()/nrow(raw_train),5), .by=agent)
+# ID de la empresa (con faltantes)
+raw_train |> select(company) |> summarise(agent_pr = round(n()/nrow(raw_train),5), .by=company)
+# Fecha de llegada
+raw_train |> select(arrival_date) |> summarise(arri_pr = round(n()/nrow(raw_train),5), .by=arrival_date)
+# Fecha de llegada
+raw_train |> select(is_repeated_guest) |> summarise(arri_pr = round(n()/nrow(raw_train),5), .by=is_repeated_guest)
+```
+
+### 2.1.1 Columnas con valores faltantes
+Podemos observar que existen variables con valores nulos:
+ - `agent`: 13.5 de las observaciones son NULL. Se decide seguir usando esta variable.
+ - `company`: 94.1% de las observaciones son NULL. Debido a la alta cantidad de valores nulos, se decide no utilizar esta variable.
+ - `country`: 0.4% de las observaciones son NULL. Se decide agrupar esta variable por regiones, ya que existen 144 países distintos.
+ 
+ 
+### 2.1.2 Relaciones entre predictores
+
+
+# 3. Preprocesamiento
+Aquí se presenta el razonamiento para el preprocesamiento de los predictores:
+
+
+ - `hotel`: se hará variable dummy y se registrará la interacción con `lead_time`, ya que es posible que el tiempo de anticipación de la reserva sea distinto para los hoteles de ciudad y resort.
+ - `lead_time`: se normalizará para que los coeficientes sean comparables.
+ - `stays_in_weekend_nights` y `stays_in_week_nights`: se normalizarán para que los coeficientes sean comparables.
+ - `adults`: se normalizará para que los coeficientes sean comparables.
+ - `meal`: primero se agrupará SC y Undefined y después se hará variable dummy y se registrará la interacción con `adults`.
+ - `country`: se agrupará por regiones y se hará variable dummy.
+ - `market_segment`: se omitirá por no ser de relevancia para el problema.
+ - `distribution_channel`: se hará dummy.
+ - `is_repeated_guest`: se hará dummy.  
+ - `previous_cancellations`: se hará dummy.
+ - `previous_bookings_not_canceled`: se hará dummy.
+ - `reserved_room_type`: se hará dummy y se evaluará varianza.
+ - `assigned_room_type`: se hará dummy y se evaluará varianza.
+ - `booking_changes`: se normalizará para que los coeficientes sean comparables.    
+ - `deposit_type`: se hará dummy.
+ - `days_in_waiting_list`: se normalizará para que los coeficientes sean comparables.
+ - `customer_type`: se hará dummy.
+ - `average_daily_rate`: se normalizará para que los coeficientes sean comparables.
+ - `required_car_parking_spaces`: se hará dummy.
+ - `total_of_special_requests`: se normalizará para que los coeficientes sean comparables.
+ - `arrival_date`: se extraerá el mes y año de la fecha de llegada.
+
+
+A las variables que se les aplique un método dummy, se evaluará la varianza para determinar si se eliminan o no.
+
+# 4. Modelación
+
+La métrica de evaluación es la pérdida logarítmica y en el concurso la pérdida logaritmica de prueba de referencia es 0.24376 por lo que los modelos deben reducir la pérdida logaritmica a tal valor.
+
+## 4.2 Regresión logística
+
+La regresión logística es el modelo más simple para clasificación binaria. Aplicaremos el preprocesamiento de la información.
+
+### 4.1.1 Primer intento.
+
+Solo usamos las variables numéricas normalizadas.
+ - lead_time
+ - adults
+ - stays_in_weekend_nights
+ - stays_in_week_nights
+ - booking_changes
+ - days_in_waiting_list
+ - average_daily_rate
+ - total_of_special_requests
+
+```{r}
+modelo_logistico_1 <- logistic_reg() |>
+  set_engine("glm") |>
+  set_mode("classification")
+
+receta_1 <- recipe(children ~ lead_time +
+                     adults +
+                     stays_in_weekend_nights +
+                     stays_in_week_nights + 
+                     booking_changes +
+                     days_in_waiting_list + 
+                     average_daily_rate +
+                     total_of_special_requests, 
+                   data = raw_train) |>
+  step_normalize(lead_time, 
+                 adults, 
+                 stays_in_weekend_nights, 
+                 stays_in_week_nights, 
+                 booking_changes, 
+                 days_in_waiting_list, 
+                 average_daily_rate, 
+                 total_of_special_requests)
+
+
+flujo_logistico_1 <- workflow() |>
+  add_recipe(receta_1) |>
+  add_model(modelo_logistico)
+
+# Entrenamos el modelo
+ajuste_logístico_1 <- flujo_logistico_1 |> 
+  fit(data = raw_train)
+
+predicciones_logisticas_1 <- ajuste_logístico_1 |> predict(new_data = raw_test, type = "prob") |> select(.pred_children)
+#predicciones_logisticas |> mutate(id=1:n()) |> rename(.pred_class)
+predicciones_logisticas_1 |> mutate(id=1:n()) |> rename(probs=.pred_children) |> select(id, probs)  |> write_csv("./datos/predicciones_logisticas_1.csv")
+
+# perdida logaritmica de entrenamiento
+binario_entrena <- ifelse(raw_train$children == "none", 0, 1)
+probs_entrena   <- ajuste_logístico_1 |> predict(new_data = raw_train, type = "prob") |> pull(.pred_children)
+log_loss_function(probs_entrena, binario_entrena)
+```
+
+### 4.1.2 Segundo intento.
+Ahora procederemos a introducir duummys en la regresión. Solo usaremos las variables con mayor balanceo:
+ - hotel
+ - meal: agruparemos SC y undefined
+ - is_repeated_guest
+ - distribution_channel
+ - reserved_room_type
+
+```{r}
+# Especificación del modelo
+modelo_logistico_2 <- logistic_reg() |>
+  set_engine("glm") |>
+  set_mode("classification")
+
+# Proprocesamiento de los datos de entrenamiento
+receta_2 <- recipe(children ~ 
+                     lead_time +  
+                     adults +
+                     stays_in_weekend_nights +
+                     stays_in_week_nights + 
+                     booking_changes +
+                     days_in_waiting_list + 
+                     average_daily_rate +
+                     total_of_special_requests +
+                     hotel +
+                     meal +
+                     distribution_channel +
+                     is_repeated_guest +
+                     reserved_room_type +
+                     assigned_room_type +
+                     deposit_type +
+                     customer_type +
+                     required_car_parking_spaces+
+                     arrival_date,,
+                   data = raw_train) |>
+  step_normalize(lead_time, 
+                 adults, 
+                 stays_in_weekend_nights, 
+                 stays_in_week_nights, 
+                 booking_changes, 
+                 days_in_waiting_list, 
+                 average_daily_rate, 
+                 total_of_special_requests) |>
+  step_mutate(hotel = as.factor(hotel),
+              meal = if_else(meal == "SC" | meal == "Undefined", "SC/Undefined", meal),
+              meal = as.factor(meal), 
+              distribution_channel = as.factor(distribution_channel), 
+              is_repeated_guest = as.factor(is_repeated_guest), 
+              reserved_room_type = as.factor(reserved_room_type), 
+              assigned_room_type = as.factor(assigned_room_type), 
+              deposit_type = if_else(deposit_type == "No_Deposit", "No_Deposit", "Deposit"),
+              deposit_type = as.factor(deposit_type), 
+              customer_type = as.factor(customer_type),
+              required_car_parking_spaces = as.factor(required_car_parking_spaces),
+              mes = month(arrival_date),
+              mes = as.factor(mes),
+              año = year(arrival_date),
+              año = as.factor(año)) |>
+  step_dummy(hotel, 
+             meal, 
+             distribution_channel,
+             reserved_room_type, 
+             assigned_room_type, 
+             deposit_type, 
+             customer_type, 
+             required_car_parking_spaces,
+             mes,
+             año)  |>
+  step_rm(arrival_date) |>
+  step_interact(~ starts_with("hotel"):starts_with("lead_time")+ 
+                starts_with("mes"):starts_with("año")+ 
+                starts_with("mes"):starts_with("lead_time")+
+                starts_with("adults"):starts_with("meal")
+                ) 
+
+receta_preparada <- prep(receta_2)
+prep_train <- bake(receta_preparada, new_data = NULL)
+
+
+flujo_logistico_2 <- workflow() |>
+  add_recipe(receta_2) |>
+  add_model(modelo_logistico_2)
+
+# Entrenamos el modelo
+ajuste_logístico_2 <- flujo_logistico_2 |> 
+  fit(data = raw_train)
+
+predicciones_logisticas_2 <- ajuste_logístico_2 |> predict(new_data = raw_test, type = "prob") |> select(.pred_children)
+predicciones_logisticas_2 |> mutate(id=1:n()) |> rename(probs=.pred_children) |> select(id, probs)  |> write_csv("./datos/predicciones_logisticas_2.csv")
+
+# perdida logaritmica de entrenamiento
+binario_entrena <- ifelse(raw_train$children == "none", 0, 1)
+probs_entrena   <- ajuste_logístico_2 |> predict(new_data = raw_train, type = "prob") |> pull(.pred_children)
+log_loss_function(probs_entrena, binario_entrena)
+
+```
+
+### 4.1.2 Tercer intento.
+Vamos a tomar el segundo intento pero utilizaremos validación cruzada para elegir la mejor combinación de regularización L1 y L2 usando grid_seach, además estableceremos una relación entre hotel y mes.
+
+```{r}
+# Especificación del modelo
+modelo_logistico_3 <- logistic_reg(penalty=tune(), mixture = tune()) |>
+  set_engine("glmnet") |>
+  set_mode("classification")
+
+cv_folds <- vfold_cv(raw_train, v = 10, strata = children)
+grid <- grid_regular(penalty(), mixture(), levels = 20)
+
+# Proprocesamiento de los datos de entrenamiento
+receta_3 <- recipe(children ~ .,
+                   data = raw_train) |>
+  step_rm(agent, company, country, market_segment) |> 
+  step_normalize(lead_time, 
+                 adults, 
+                 stays_in_weekend_nights, 
+                 stays_in_week_nights, 
+                 booking_changes, 
+                 days_in_waiting_list, 
+                 average_daily_rate, 
+                 total_of_special_requests) |>
+  step_mutate(hotel = as.factor(hotel),
+              meal = if_else(meal == "SC" | meal == "Undefined", "SC/Undefined", meal),
+              meal = as.factor(meal), 
+              distribution_channel = as.factor(distribution_channel), 
+              is_repeated_guest = as.factor(is_repeated_guest), 
+              reserved_room_type = as.factor(reserved_room_type), 
+              assigned_room_type = as.factor(assigned_room_type), 
+              deposit_type = if_else(deposit_type == "No_Deposit", "No_Deposit", "Deposit"),
+              deposit_type = as.factor(deposit_type), 
+              customer_type = as.factor(customer_type),
+              required_car_parking_spaces = as.factor(required_car_parking_spaces),
+              mes = month(arrival_date),
+              mes = as.factor(mes),
+              año = year(arrival_date),
+              año = as.factor(año)) |>
+  step_novel(distribution_channel, is_repeated_guest, reserved_room_type, assigned_room_type, deposit_type, customer_type, required_car_parking_spaces, mes, año) |>
+  step_dummy(hotel, 
+             is_repeated_guest,
+             meal, 
+             distribution_channel,
+             reserved_room_type, 
+             assigned_room_type, 
+             deposit_type, 
+             customer_type, 
+             required_car_parking_spaces,
+             mes,
+             año)  |>
+  step_rm(arrival_date) |>
+  step_interact(~ starts_with("hotel"):starts_with("lead_time")+ 
+                starts_with("mes"):starts_with("año")+ 
+                starts_with("mes"):starts_with("lead_time")+
+                starts_with("adults"):starts_with("meal") +
+                starts_with("hotel"):starts_with("mes") +
+                starts_with("hotel"):starts_with("customer_type"))
+
+receta_preparada <- prep(receta_3)
+prep_train <- bake(receta_preparada, new_data = NULL)
+
+
+flujo_logistico_3 <- workflow() |>
+  add_recipe(receta_3) |>
+  add_model(modelo_logistico_3)
+
+# Resultados
+metricas <- metric_set(mn_log_loss)
+resultados <- tune_grid(flujo_logistico_3, 
+                        resamples = cv_folds, 
+                        metrics = metricas,
+                        grid = grid,
+                        control = control_grid(save_pred = TRUE))
+
+# Mejor resultado
+mejores_resultados <- resultados |>
+  select_best(metric = "mn_log_loss")
+
+modelo_final_logistico_3 <- finalize_workflow(flujo_logistico_3, mejores_resultados)
+
+# Entrenamos el modelo
+ajuste_logístico_3 <- modelo_final_logistico_3 |> 
+  fit(data = raw_train)
+
+predicciones_logisticas_3 <- ajuste_logístico_3 |> predict(new_data = raw_test, type = "prob") |> select(.pred_children)
+predicciones_logisticas_3 |> mutate(id=1:n()) |> rename(probs=.pred_children) |> select(id, probs)  |> write_csv("./datos/predicciones_logisticas_3.csv")
+
+# perdida logaritmica de entrenamiento
+binario_entrena <- ifelse(raw_train$children == "none", 0, 1)
+probs_entrena   <- ajuste_logístico_3 |> predict(new_data = raw_train, type = "prob") |> pull(.pred_children)
+log_loss_function(probs_entrena, binario_entrena)
+
+```
+
+
+
+
+
+
+
+
+
+-----------------
+
+
+## 4.2 Red neuronal
+
+### 4.2.1 Primer intento
+Igual que en el modelo de regresión logística, solo usamos las variables numéricas normalizadas.
+ - lead_time
+ - adults
+ - stays_in_weekend_nights
+ - stays_in_week_nights
+ - booking_changes
+ - days_in_waiting_list
+ - average_daily_rate
+ - total_of_special_requests
+
+
+```{r}
+#Preprocesamiento
+target_entrena <- ifelse(raw_train$children == "none", 0, 1)
+
+predictores_entrena <- raw_train[, c("lead_time", 
+                             "adults", 
+                             "stays_in_weekend_nights", 
+                             "stays_in_week_nights", 
+                             "booking_changes", 
+                             "days_in_waiting_list", 
+                             "average_daily_rate", 
+                             "total_of_special_requests")]
+
+preProcValues <- preProcess(predictores_entrena, method = c("range"))
+predictores_entrena_normalizados <- predict(preProcValues, predictores_entrena)
+
+predictores_prueba <- raw_test[, c("lead_time", 
+                             "adults", 
+                             "stays_in_weekend_nights", 
+                             "stays_in_week_nights", 
+                             "booking_changes", 
+                             "days_in_waiting_list", 
+                             "average_daily_rate", 
+                             "total_of_special_requests")]
+
+preProcValues_prueba <- preProcess(predictores_prueba, method = c("range"))
+predictores_prueba_normalizados <- predict(preProcValues_prueba, predictores_prueba)
+
+# Keras necesita tensores
+X_entrena <- as.matrix(predictores_entrena_normalizados)
+y_entrena <- as.matrix(target_entrena)
+
+modelo_red_neuronal <- keras_model_sequential() |>
+  layer_dense(units = 8, activation = 'relu', input_shape = ncol(predictores_entrena)) |>
+  layer_dense(units = 4, activation = 'relu', 
+              kernel_regularizer = regularizer_l2(0.001)) |>
+  layer_dense(units = 1, activation = 'sigmoid') 
+
+modelo_red_neuronal |> compile(
+  loss = 'binary_crossentropy',
+  optimizer = "adam",
+  metrics = 'accuracy'
+)
+
+historia <- modelo_red_neuronal |> fit(
+  X_entrena, 
+  y_entrena, 
+  epochs = 100,  # Ajusta el número de épocas según sea necesario
+  batch_size =240,  # Ajusta el tamaño del lote según sea necesario
+  verbose = 1  # Cambia a 0 si no quieres imprimir el progreso
+)
+
+# prediccion
+predicciones_red_neuronal <- modelo_red_neuronal |> predict(as.matrix(predictores_prueba_normalizados)) |> as.vector()
+predicciones_red_neuronal <- tibble(id = 1:nrow(raw_test),
+                                    probs = predicciones_red_neuronal)
+
+predicciones_red_neuronal |> write_csv("./datos/predicciones_red_neuronal.csv")
+
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+```{r}
+modelo_logistico <- logistic_reg() |>
+  set_engine("glm") |>
+  set_mode("classification")
+
+# preprocesamiento
+preprocesamiento <- recipe(children ~ ., data = raw_train) |>
+  step_remove(company, market_segment) |> # Removemos las variables que no necesitamos
+  step_dummy(hotel, ) |>
+  
+  
+  
+  
+  
+  step_mutate(country = fct_lump(country, n = 10)) |>
+  step_dummy(all_nominal(), -all_outcomes()) |>
+  step_normalize(all_numeric(), -all_outcomes()) |>
+  step_interact(~ hotel:lead_time) |>
+  step_interact(~ meal:adults) |>
+  step_interact(~ assigned_room_type:reserved_room_type) |>
+  step_interact(~ assigned_room_type:lead_time) |>
+  step_interact(~ assigned_room_type:booking_changes) |>
+  step_interact(~ assigned_room_type:average_daily_rate) |>
+  step_interact(~ assigned_room_type:total_of_special_requests) |>
+  step_interact(~ assigned_room_type:required_car_parking_spaces) |>
+  step_interact(~ assigned_room_type:stays_in_weekend_nights) |>
+  step_interact(~ assigned_room_type:stays_in_week_nights) |>
+  step_interact(~ assigned_room_type:adults) |>
+  step_interact(~ assigned_room_type:days_in_waiting_list) |>
+  step_interact(~ assigned_room_type:previous_cancellations) |>
+  step_interact(~ assigned_room_type:previous_bookings_not_canceled) |>
+  step_interact(~ assigned_room_type:is_repeated_guest) |>
+  step_interact(~ assigned_room_type:arrival_date) |>
+  step_interact(~ assigned_room_type:country) |>
+  step_interact(~ assigned_room_type:market_segment) |>
+  step_interact(~ assigned_room_type:distribution_channel) |>
+  step_interact(~ assigned_room_type:deposit_type) |>
+  step_interact(~ assigned_room_type:customer_type) |>
+  step_interact(~ assigned_room_type:agent) |>
+  step_interact(~ assigned_room_type:company) |>
+  step_interact(~ assigned_room_type:reserved
+
+```
