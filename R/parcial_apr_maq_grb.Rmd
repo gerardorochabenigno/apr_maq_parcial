@@ -11,7 +11,9 @@ library(caret)
 library(tensorflow) 
 library(reticulate)
 library(e1071)
-use_python("/Users/gerardorochabenigno/miniforge3/envs/py_tf/bin/python", required = TRUE)
+library(car)
+library(glmnet)
+#use_python("/Users/gerardorochabenigno/miniforge3/envs/py_tf/bin/python", required = TRUE)
 
 log_loss_function <- function(pred, obs){
   # Se calcula la pérdida logarítmica
@@ -72,74 +74,171 @@ raw_train <- read_csv("./datos/hoteles-entrena.csv", show_col_types = FALSE)
 
 ## 2.1 Vistazo a la información
 
+### 2.1.2 Variables númericas
+
+Existen 10 variables númericas:
+
+ - `lead_time`
+ - `stays_in_weekend_nights`
+ - `stays_in_week_nights`
+ - `adults`
+ - `previous_cancellations`
+ - `previous_bookings_not_canceled`
+ - `booking_changes`
+ - `days_in_waiting_list`
+ - `average_daily_rate`
+ - `total_of_special_requests`
+
+Las siguientes variables son categóricas:
+ - `hotel`
+ - `adults`
+ - `meal`
+ - `country`
+ - `market_segment`
+ - `distribution_channel`
+ - `is_repeated_guest`)
+ - `reserved_room_type`
+ - `assigned_room_type`
+ - `deposit_type`
+ - `agent`
+ - `company`
+ - `customer_type`
+ - `required_car_parking_spaces`
+
+Existe una variable de 
+ - `arrival_date`: Fecha de llegada
+
+
+Primero analizaremos la distribución de las variables númericas. 
+
+Podemos observar lo siguiente:
+ - Existen valores extremos en las siguientes variables: `lead_time`, `stays_in_weekend_nights`, `stays_in_week_nights`, `previous_cancellations`, `previous_bookings_not_canceled`, `booking_changes`, `days_in_waiting_list`.
+ - Existen valores negativos en la variable `average_daily_rate`
+
+Como medida preventiva, se eliminarán las observaciones que estén arriba del percentil 99 de las variables con valores extremos y se eliminarán los registros negativos de la variable "average_daily_rate" 
+
 ```{r}
-# Tipo de hotel
-raw_train |> select(hotel) |> summarise(hotel_pr = round( n()/nrow(raw_train),5), .by=hotel)
-# Cantidad de niños
-raw_train |> select(children) |> summarise(children_pr = round(n()/nrow(raw_train),5), .by=children)
-# Tipo de comida
-raw_train |> select(meal) |> summarise(meal_pr = round(n()/nrow(raw_train),5), .by=meal)
-# País de origen
-raw_train |> select(country) |> summarise(country_pr = round(n()/nrow(raw_train),5), .by=country)
-# Segmento de mercado
-raw_train |> select(market_segment) |> summarise(market_segment_pr = round(n()/nrow(raw_train),5), .by=market_segment)
-# Canal de distribución
-raw_train |> select(distribution_channel) |> summarise(distribution_channel_pr = round(n()/nrow(raw_train),5), .by=distribution_channel)
-# El huésped es repetido
-raw_train |> select(is_repeated_guest) |> summarise(is_repeated_guest_pr = round(n()/nrow(raw_train),5), .by=is_repeated_guest)
-# Número de reservaciones previas canceladas
-raw_train |> select(previous_cancellations) |> summarise(previous_cancellations_pr = round(n()/nrow(raw_train),5), .by=previous_cancellations)
-# Número de reservaciones previas no canceladas
-raw_train |> select(previous_bookings_not_canceled) |> summarise(previous_bookings_not_canceled_pr = round(n()/nrow(raw_train),5), .by=previous_bookings_not_canceled)
-# Tipo de habitación reservada
-raw_train |> select(reserved_room_type) |> summarise(reserved_room_type_pr = round(n()/nrow(raw_train),5), .by=reserved_room_type)
-# Tipo de habitación asignada
-raw_train |> select(assigned_room_type) |> summarise(assigned_room_type_pr = round(n()/nrow(raw_train),5), .by=assigned_room_type)
-# Número de cambios en la reserva
-raw_train |> select(booking_changes) |> summarise(booking_changes_pr = round(n()/nrow(raw_train),5), .by=booking_changes)
-# Tipo de depósito
-raw_train |> select(deposit_type) |> summarise(deposit_type_pr = round(n()/nrow(raw_train),5), .by=deposit_type)
-# TIpo de cliente
-raw_train |> select(customer_type) |> summarise(customer_type_pr = round(n()/nrow(raw_train),5), .by=customer_type)
-# Espacios de estacionamiento
-raw_train |> select(required_car_parking_spaces) |> summarise(required_car_parking_spaces_pr = round(n()/nrow(raw_train),5), .by=required_car_parking_spaces)
-# Número de solicitudes especiales
-raw_train |> select(total_of_special_requests) |> summarise(total_of_special_requests_pr = round(n()/nrow(raw_train),5), .by=total_of_special_requests)
-# numero de aultos  
-raw_train |> select(adults) |> summarise(adults_pr = round(n()/nrow(raw_train),5), .by=adults)
-# lead time
-raw_train |> select(lead_time) |> 
-  summarise(lead_time_av = mean(lead_time), lead_time_sd = sd(lead_time), lead_time = "lead_time") |> pivot_longer(cols = c(lead_time_av, lead_time_sd), values_to = "lead_time_pr")
-# Número de noches de fin de semana
-raw_train |> select(stays_in_weekend_nights) |> 
-  summarise(stays_in_weekend_nights_av = mean(stays_in_weekend_nights), stays_in_weekend_nights_sd = sd(stays_in_weekend_nights), stays_in_weekend_nights = "stays_in_weekend_nights") |> pivot_longer(cols = c(stays_in_weekend_nights_av, stays_in_weekend_nights_sd), values_to = "stays_in_weekend_nights_pr")
-# Número de noches entre semana
-raw_train |> select(stays_in_week_nights) |> 
-  summarise(stays_in_week_nights_av = mean(stays_in_week_nights), stays_in_week_nights_sd = sd(stays_in_week_nights), stays_in_week_nights = "stays_in_week_nights") |> pivot_longer(cols = c(stays_in_week_nights_av, stays_in_week_nights_sd), values_to = "stays_in_week_nights_pr")
-# days_in_waiting_list
-raw_train |> select(days_in_waiting_list) |> 
-  summarise(days_in_waiting_list_av = mean(days_in_waiting_list), days_in_waiting_list_sd = sd(days_in_waiting_list), days_in_waiting_list = "days_in_waiting_list") |> pivot_longer(cols = c(days_in_waiting_list_av, days_in_waiting_list_sd), values_to = "days_in_waiting_list_pr")
-# average_daily_rate
-raw_train |> select(average_daily_rate) |> 
-  summarise(average_daily_rate_av = mean(average_daily_rate), average_daily_rate_sd = sd(average_daily_rate), average_daily_rate = "average_daily_rate") |> pivot_longer(cols = c(average_daily_rate_av, average_daily_rate_sd), values_to = "average_daily_rate_pr")
-# ID de la agencia de viajes (con faltantes)
-raw_train |> select(agent) |> summarise(agent_pr = round(n()/nrow(raw_train),5), .by=agent)
-# ID de la empresa (con faltantes)
-raw_train |> select(company) |> summarise(agent_pr = round(n()/nrow(raw_train),5), .by=company)
-# Fecha de llegada
-raw_train |> select(arrival_date) |> summarise(arri_pr = round(n()/nrow(raw_train),5), .by=arrival_date)
-# Fecha de llegada
-raw_train |> select(is_repeated_guest) |> summarise(arri_pr = round(n()/nrow(raw_train),5), .by=is_repeated_guest)
+estadisticas_vars_numericas <-
+raw_train |> select(lead_time,
+                    stays_in_weekend_nights,
+                    stays_in_week_nights,
+                    adults,
+                    previous_cancellations,
+                    previous_bookings_not_canceled,
+                    booking_changes,
+                    days_in_waiting_list,
+                    average_daily_rate,
+                    total_of_special_requests) |>
+  summarise(across(where(is.numeric),
+                   list(
+                     min = min,
+                     p1 = ~ quantile(., probs = 0.01),
+                     p25 = ~ quantile(., probs = 0.25),
+                     p50 = ~ quantile(., probs = 0.50),
+                     p75 = ~ quantile(., probs = 0.75),
+                     p99 = ~ quantile(., probs = 0.99),
+                     max = max,
+                     mean = mean,
+                     sd = sd
+                   ), .names = "{col}-{fn}")
+  ) |> pivot_longer(cols = everything(),
+               names_to = c("variable", "estadistica"),
+               names_sep = "-",
+               values_to = "valor") |>
+  pivot_wider(names_from = variable, values_from = valor)
+
+estadisticas_vars_numericas
+
+```
+# Procedemos a observar la correlación entre variables, aliminando las observaciones anormales. Vemos que `previous_cancellations` tiene varianza cero, por lo que se eliminará esta variable en la predicción. Vemos además que no hay correlaciones fuertes entre los predictores númericos
+
+```{r}
+
+raw_train |>
+  select(    
+    lead_time,
+    stays_in_weekend_nights,
+    stays_in_week_nights,
+    adults,
+    previous_cancellations,
+    previous_bookings_not_canceled,
+    booking_changes,
+    days_in_waiting_list,
+    average_daily_rate, 
+    total_of_special_requests
+    )|>
+  filter(
+    lead_time                      <= quantile(lead_time, probs=0.99),
+    stays_in_weekend_nights        <= quantile(stays_in_weekend_nights, probs=0.99),
+    stays_in_week_nights           <= quantile(stays_in_week_nights, probs=0.99),
+    previous_cancellations         <= quantile(previous_cancellations, probs=0.99),
+    previous_bookings_not_canceled <= quantile(previous_bookings_not_canceled, probs=0.99),
+    booking_changes                <= quantile(booking_changes, probs=0.99),
+    days_in_waiting_list           <= quantile(days_in_waiting_list, probs=0.99),
+    average_daily_rate             >  0,
+  ) |>
+  select(-previous_cancellations) |>
+  cor()
 ```
 
-### 2.1.1 Columnas con valores faltantes
+### 2.1.2 Variables categóricas
 Podemos observar que existen variables con valores nulos:
- - `agent`: 13.5 de las observaciones son NULL. Se decide seguir usando esta variable.
+ - `agent`: 13.5 de las observaciones son NULL. Se decide no seguir usando esta variable.
  - `company`: 94.1% de las observaciones son NULL. Debido a la alta cantidad de valores nulos, se decide no utilizar esta variable.
  - `country`: 0.4% de las observaciones son NULL. Se decide agrupar esta variable por regiones, ya que existen 144 países distintos.
+
  
- 
-### 2.1.2 Relaciones entre predictores
+### 2.1.3 Relaciones entre predictores
+
+Para eliminar colinealidad entre variables, checaremos el Factor de inflación de varianza (VIF) de los predictores númericos. Como podemos observar, 
+
+```{r}
+modelo_logistico_vif <- logistic_reg() |>
+  set_mode("classification") |>
+  set_engine("glm")
+
+
+receta_vif <- recipe(children ~ lead_time +
+    stays_in_weekend_nights +
+    stays_in_week_nights +
+    adults +
+    previous_cancellations +
+    previous_bookings_not_canceled +
+    booking_changes +
+    days_in_waiting_list +
+    average_daily_rate  +
+    total_of_special_requests, data = raw_train) |>
+  step_filter(
+    lead_time                      <= quantile(lead_time, probs=0.99),
+    stays_in_weekend_nights        <= quantile(stays_in_weekend_nights, probs=0.99),
+    stays_in_week_nights           <= quantile(stays_in_week_nights, probs=0.99),
+    previous_cancellations         <= quantile(previous_cancellations, probs=0.99),
+    previous_bookings_not_canceled <= quantile(previous_bookings_not_canceled, probs=0.99),
+    booking_changes                <= quantile(booking_changes, probs=0.99),
+    days_in_waiting_list           <= quantile(days_in_waiting_list, probs=0.99),
+    average_daily_rate             >  0
+  ) |>
+  step_rm(previous_cancellations) |>
+  step_normalize(all_predictors())
+
+flujo_logistico_vif <- workflow() |>
+  add_recipe(receta_vif) |>
+  add_model(modelo_logistico_vif)
+
+receta_preparada <- prep(receta_vif)
+prep_train <- bake(receta_preparada, new_data = NULL)
+
+# Entrenamos el modelo
+ajuste_logistico_vif <- flujo_logistico_vif |> 
+  fit(data = raw_train)
+
+predicciones_logisticas_vif <- ajuste_logistico_vif |> predict(new_data = raw_test, type = "prob") |> select(.pred_children)
+predicciones_logisticas_vif |> mutate(id=1:n()) |> rename(probs=.pred_children) |> select(id, probs)  |> write_csv("./datos/predicciones_logisticas_vif.csv")
+
+# VIF
+vif(glm(children ~ ., data = prep_train, family = binomial))
+```
+
 
 
 # 3. Preprocesamiento
@@ -197,27 +296,29 @@ modelo_logistico_1 <- logistic_reg() |>
   set_mode("classification")
 
 receta_1 <- recipe(children ~ lead_time +
-                     adults +
-                     stays_in_weekend_nights +
-                     stays_in_week_nights + 
-                     booking_changes +
-                     days_in_waiting_list + 
-                     average_daily_rate +
-                     total_of_special_requests, 
-                   data = raw_train) |>
-  step_normalize(lead_time, 
-                 adults, 
-                 stays_in_weekend_nights, 
-                 stays_in_week_nights, 
-                 booking_changes, 
-                 days_in_waiting_list, 
-                 average_daily_rate, 
-                 total_of_special_requests)
+    stays_in_weekend_nights +
+    stays_in_week_nights +
+    previous_cancellations +
+    previous_bookings_not_canceled +
+    booking_changes +
+    days_in_waiting_list +
+    average_daily_rate, data = raw_train) |>
+  step_filter(
+    lead_time                      <= quantile(lead_time, probs=0.99),
+    stays_in_weekend_nights        <= quantile(stays_in_weekend_nights, probs=0.99),
+    stays_in_week_nights           <= quantile(stays_in_week_nights, probs=0.99),
+    previous_cancellations         <= quantile(previous_cancellations, probs=0.99),
+    previous_bookings_not_canceled <= quantile(previous_bookings_not_canceled, probs=0.99),
+    booking_changes                <= quantile(booking_changes, probs=0.99),
+    days_in_waiting_list           <= quantile(days_in_waiting_list, probs=0.99),
+    average_daily_rate             >  0
+  ) |>
+  step_rm(previous_cancellations)
 
 
 flujo_logistico_1 <- workflow() |>
   add_recipe(receta_1) |>
-  add_model(modelo_logistico)
+  add_model(modelo_logistico_1)
 
 # Entrenamos el modelo
 ajuste_logístico_1 <- flujo_logistico_1 |> 
@@ -500,6 +601,156 @@ predicciones_logisticas_4 <- ajuste_logístico_4 |> predict(new_data = raw_test,
 # perdida logaritmica de entrenamiento
 binario_entrena <- ifelse(raw_train$children == "none", 0, 1)
 probs_entrena   <- ajuste_logístico_4 |> predict(new_data = raw_train, type = "prob") |> pull(.pred_children)
+log_loss_function(probs_entrena, binario_entrena)
+
+```
+
+
+
+### 4.1.3 Quinto intento.
+```{r}
+# Preprocesamiento
+receta_5 <- recipe(children ~ ., data = raw_train) |>
+  step_filter(
+    adults > 0,
+    lead_time                      <= quantile(lead_time, probs=0.99),
+    stays_in_weekend_nights        <= quantile(stays_in_weekend_nights, probs=0.99),
+    stays_in_week_nights           <= quantile(stays_in_week_nights, probs=0.99),
+    previous_cancellations         <= quantile(previous_cancellations, probs=0.99),
+    previous_bookings_not_canceled <= quantile(previous_bookings_not_canceled, probs=0.99),
+    booking_changes                <= quantile(booking_changes, probs=0.99),
+    days_in_waiting_list           <= quantile(days_in_waiting_list, probs=0.99),
+    average_daily_rate             >  0
+  ) |>
+  step_rm(previous_cancellations) |>
+  step_normalize(
+    lead_time,
+    stays_in_weekend_nights,
+    stays_in_week_nights,
+    adults,
+    previous_bookings_not_canceled,
+    booking_changes,
+    days_in_waiting_list,
+    average_daily_rate,
+    total_of_special_requests
+  ) |>
+  # Preprocesamiento de variables categóricas
+  step_rm(agent, company, country, market_segment) |>
+  step_mutate(
+    hotel = as.factor(hotel),
+    meal = if_else(meal=="SC" | meal=="Undefined", "SC/Undefined", meal),
+    meal = as.factor(meal),
+    #country = as.factor(country),
+    #market_segment = as.factor(market_segment),
+    distribution_channel = as.factor(distribution_channel),
+    is_repeated_guest = as.factor(is_repeated_guest),
+    reserved_room_type = as.factor(reserved_room_type),
+    assigned_room_type = as.factor(assigned_room_type),
+    deposit_type = as.factor(deposit_type),
+    customer_type = as.factor(customer_type),
+    required_car_parking_spaces = as.factor(required_car_parking_spaces)
+  ) |>
+  step_novel(
+    hotel,
+    meal,
+    #country,
+    #market_segment,
+    distribution_channel,
+    is_repeated_guest,
+    reserved_room_type,
+    assigned_room_type,
+    deposit_type,
+    customer_type,
+    required_car_parking_spaces
+  ) |>
+  step_dummy(
+    hotel,
+    meal,
+    #country,
+    #market_segment,
+    distribution_channel,
+    is_repeated_guest,
+    reserved_room_type,
+    assigned_room_type,
+    deposit_type,
+    customer_type,
+    required_car_parking_spaces
+  ) |>
+  # Proprocesamiento de variable de fecha
+  step_date(arrival_date, features = c("month", "year")) |>
+  step_mutate(arrival_date_month = as.factor(arrival_date_month),
+              arrival_date_year = as.factor(arrival_date_year)) |>
+  step_novel(
+    arrival_date_month,
+    arrival_date_year
+  ) |>
+  step_dummy(
+    arrival_date_month,
+    arrival_date_year
+  ) |>
+  step_rm(arrival_date) |>
+  # Interacciones
+  step_interact(
+    ~ starts_with("hotel"):starts_with("lead_time") +
+      starts_with("hotel"):starts_with("average_daily_rate") +
+      starts_with("hotel"):starts_with("arrival_date_month") +
+      adults:starts_with("meal")
+  ) |>
+  step_zv(all_predictors()) |>
+  step_corr(all_predictors()) |>
+  step_rm(
+    hotel_Resort_Hotel
+          )
+
+# Guardamos datos de entrenamiento
+receta_preparada <- prep(receta_5)
+prep_train <- bake(receta_preparada, new_data = NULL)
+
+
+cv_folds <- vfold_cv(raw_train, v = 10, strata = children)
+grid <- grid_regular(penalty(), mixture(), levels = 20)
+  
+# Especificación del modelo
+modelo_logistico_5 <- logistic_reg(penalty=tune(), mixture = tune()) |>
+  set_engine("glmnet") |>
+  set_mode("classification")
+
+# Especificamos el flujo
+flujo_logistico_5 <- workflow() |>
+  add_recipe(receta_5) |>
+  add_model(modelo_logistico_5)
+
+# Resultados
+metricas <- metric_set(mn_log_loss)
+resultados <- tune_grid(flujo_logistico_5, 
+                        resamples = cv_folds, 
+                        metrics = metricas,
+                        grid = grid,
+                        control = control_grid(save_pred = TRUE)
+                        )
+
+# Mejor resultado
+mejores_resultados <- resultados |>
+  select_best(metric = "mn_log_loss")
+
+modelo_final_logistico_5 <- finalize_workflow(flujo_logistico_5, mejores_resultados)
+
+# Entrenamos el modelo
+ajuste_logístico_5 <- modelo_final_logistico_5 |> 
+  fit(data = raw_train)
+
+# Predecimos
+predicciones_logisticas_5 <- ajuste_logístico_5 |> predict(new_data = raw_test, type = "prob") |> select(.pred_children)
+
+# VIF
+vif(glm(children ~ ., data = prep_train, family = binomial))
+
+# Guardamos las predicciones
+predicciones_logisticas_5 |> mutate(id=1:n()) |> rename(probs=.pred_children) |> select(id, probs)  |> write_csv("./datos/predicciones_logisticas_5.csv")
+
+# perdida logaritmica de entrenamiento
+binario_entrena <- ifelse(raw_train$children == "none", 0, 1)
+probs_entrena   <- ajuste_logístico_5 |> predict(new_data = raw_train, type = "prob") |> pull(.pred_children)
 log_loss_function(probs_entrena, binario_entrena)
 
 ```
