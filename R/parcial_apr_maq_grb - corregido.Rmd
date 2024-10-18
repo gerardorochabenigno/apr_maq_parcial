@@ -903,9 +903,6 @@ probs_entrena   <- ajuste_logístico_4 |> predict(new_data = raw_train, type = "
 log_loss_function(probs_entrena, binario_entrena)
 
 ```
-
-
-
 ### 4.1.3 Quinto intento.
 ```{r}
 # Preprocesamiento
@@ -1377,106 +1374,72 @@ log_loss_function(probs_entrena, binario_entrena)
 ```
 
 
-## 4.4 Maquina de soporte vectorial
+## 4.4 XGboost
+
+# 4.4.1 Primer intento
+
+Solo variables númericas y dummys sobre variables categóricas
 
 ```{r}
-# preprocesamiento
-receta_1 <- recipe(children ~ 
-                     lead_time +  
-                     adults +
-                     stays_in_weekend_nights +
-                     stays_in_week_nights + 
-                     booking_changes +
-                     days_in_waiting_list + 
-                     average_daily_rate +
-                     total_of_special_requests +
-                     hotel +
-                     meal +
-                     distribution_channel +
-                     is_repeated_guest +
-                     reserved_room_type +
-                     assigned_room_type +
-                     deposit_type +
-                     customer_type +
-                     required_car_parking_spaces+
-                     arrival_date,
-                   data = raw_train) |>
-  step_scale(lead_time, 
-                 adults, 
-                 stays_in_weekend_nights, 
-                 stays_in_week_nights, 
-                 booking_changes, 
-                 days_in_waiting_list, 
-                 average_daily_rate, 
-                 total_of_special_requests) |>
-  step_mutate(hotel = as.factor(hotel),
-              meal = if_else(meal == "SC" | meal == "Undefined", "SC/Undefined", meal),
-              meal = as.factor(meal), 
-              distribution_channel = as.factor(distribution_channel), 
-              is_repeated_guest = as.factor(is_repeated_guest), 
-              reserved_room_type = as.factor(reserved_room_type), 
-              assigned_room_type = as.factor(assigned_room_type), 
-              deposit_type = if_else(deposit_type == "No_Deposit", "No_Deposit", "Deposit"),
-              deposit_type = as.factor(deposit_type), 
-              customer_type = as.factor(customer_type),
-              required_car_parking_spaces = as.factor(required_car_parking_spaces)
-              ) |>
-  step_dummy(hotel, 
-             meal, 
-             distribution_channel,
-             is_repeated_guest,
-             reserved_room_type, 
-             assigned_room_type, 
-             deposit_type, 
-             customer_type, 
-             required_car_parking_spaces)  |>
-  step_date(arrival_date) |>
-  step_rm(arrival_date_dow) |>
-  step_rm(arrival_date) |>
-  step_mutate(arrival_date_month = as.factor(arrival_date_month),
-              arrival_date_year = as.factor(arrival_date_year)) |>
-  step_dummy(starts_with("arrival_date")) |>
-  step_interact(~ starts_with("hotel"):starts_with("lead_time")+ 
-                starts_with("arrival_date"):starts_with("hotel")+ 
-                starts_with("adults"):starts_with("meal")+
-                starts_with("hotel"):starts_with("average_daily_rate")
-                )
+set.seed(123) # para reproducibilidad
+
+# Aplicamos preprocesamiento inicial a muetsra de entrenamiento y prueba
+raw_train_2 <- bake(receta_inicial_preparada, new_data=NULL)
+raw_test_2  <- bake(receta_inicial_preparada, new_data=raw_test)
+
+# Receta
+receta_xgboost_1 <- recipe(children ~ ., data = raw_train_2) |>
+  step_dummy(all_factor_predictors())
+
+# Preparamos receta
+receta_preparada_xgboost_1 <- prep(receta_xgboost_1)
+
+# Obtenemos datos preprocesados de entrenamiento y prueba
+prep_entrena_xgboost_1 <- bake(receta_preparada_xgboost_1, new_data = NULL) |> mutate(children = if_else(children == "none", 0, 1))
+prep_prueba_xgboost_1 <- bake(receta_preparada_xgboost_1, new_data = raw_test_2) 
+
+prep_entrena_xgboost_1 <- xgb.DMatrix(
+  data = as.matrix(prep_entrena_xgboost_1 |> select(-children)),
+  label = prep_entrena_xgboost_1 |> pull(children)
+  )
+prep_prueba_xgboost_1 <- xgb.DMatrix(data = as.matrix(prep_prueba_xgboost_1)) 
+
+parametros <- list(
+  objective = "binary:logistic",  # Clasificación binaria
+  eval_metric = "logloss",        # Métrica de evaluación (puedes cambiar a 'auc' si prefieres)
+  max_depth = 6,                  # Profundidad de los árboles
+  eta = 0.1,                      # Tasa de aprendizaje
+  subsample = 0.8,                # Submuestreo de los datos
+  colsample_bytree = 0.8          # Submuestreo de las columnas
+)
+
+# Realizar la validación cruzada con 10 particiones
+resultados_xgboost_1 <- xgb.cv(
+  params = parametros,
+  data = prep_entrena_xgboost_1,
+  nfold = 10,                   # Número de particiones (k-fold CV)
+  nrounds = 200,               # Número de iteraciones (épocas)
+  early_stopping_rounds = 10,  # Detener si no hay mejoras en 10 rondas
+  verbose = 1
+)
+
+iter_optima <- resultados_xgboost_1$best_iteration  # Extraer el número óptimo de iteraciones
+modelo_xgboost_1 <- xgb.train(
+  params = params,
+  data = prep_entrena_xgboost_1,
+  nrounds = iter_optima,  # Usar el número óptimo de rondas
+  verbose = 1
+)
+
+# Predicciones en el nuevo conjunto de datos
+preds_prueba_xgboost_1 <- predict(modelo_xgboost_1, prep_prueba_xgboost_1)
+preds_prueba_xgboost_1 |> as_tibble() |> mutate(id = 1:n()) |> rename(probs = value) |> select(id, probs) |> write_csv("./datos/corregido/predicciones_xgboost_1.csv")
 
 
-receta_preparada <- prep(receta_1)
-prep_train <- bake(receta_preparada, new_data = NULL)
-
-# Preprocesar el conjunto de prueba de la misma manera
-prep_test <- bake(receta_preparada, new_data = raw_test)
-
-
-ctrl <- trainControl(method = "cv", number = 10, savePredictions = TRUE, classProbs = TRUE)
-
-tune_grid <- expand.grid(C = c(0.1, 1, 10, 100),
-                          sigma = c(0.01, 0.1, 1))
-
-svm_model_1 <- svm(children ~ ., 
-                   data = prep_train, 
-                   kernel = "radial",  # Puedes cambiar a "radial" si lo deseas
-                   cost = 1,           # Ajusta el costo según sea necesario
-                   probability = TRUE,
-                   tuneGrid = tune_grid,        # Cuadrícula de hiperparámetros
-                   trControl = ctrl)
-
-
-# Hacer predicciones
-pred_svm_1 <- predict(svm_model_1, newdata = prep_test, probability = TRUE) |> attr("probabilities") |> as_tibble() |>
-  select(children) |> rename(probs = children) |> mutate(id = 1:nrow(raw_test)) |> select(id, probs) |> write_csv("./datos/pred_svm_1.csv")
-
-
-# Error de entrenamiento
-pred_entrena <- predict(svm_model_1, newdata = prep_train, probability = TRUE) |> attr("probabilities") |> as_tibble() |>
-  select(children) |> rename(probs = children)
-
-
-log_loss_function(pred_entrena$probs, ifelse(raw_train$children == "none", 0, 1))
-
+# Predicciones en cojunto de entrenamiento
+predicciones_entrena_xgboost_1 <- predict(modelo_xgboost_1, prep_entrena_xgboost_1)
+# perdida logaritmica de entrenamiento
+#binario_entrena <- ifelse(prep_train$children == "none", 0, 1)
+#log_loss_function(predicciones_entrena, binario_entrena)
 ```
-
-
 
