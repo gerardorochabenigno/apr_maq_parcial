@@ -4,6 +4,7 @@ output: html_document
 date: "2024-10-12"
 ---
 ```{r, echo=FALSE, include=FALSE}
+rm(list=ls())
 library(tidymodels)
 library(tidyverse)
 library(keras)
@@ -13,6 +14,7 @@ library(reticulate)
 library(e1071)
 library(car)
 library(glmnet)
+library(gt)
 #use_python("/Users/gerardorochabenigno/miniforge3/envs/py_tf/bin/python", required = TRUE)
 
 log_loss_function <- function(pred, obs){
@@ -20,6 +22,10 @@ log_loss_function <- function(pred, obs){
   log_loss <- -1 * mean(obs * log(pred) + (1 - obs) * log(1 - pred))
   log_loss
 }
+
+# Leemos la información
+raw_test  <- read_csv("./datos/hoteles-prueba.csv", show_col_types = FALSE)
+raw_train <- read_csv("./datos/hoteles-entrena.csv", show_col_types = FALSE)
 
 ```
 
@@ -66,12 +72,6 @@ A continuación se describen las variables disponibles en el conjunto de datos d
  Target:
   - `children`
 
-```{r}
-# Leemos la información
-raw_test  <- read_csv("./datos/hoteles-prueba.csv", show_col_types = FALSE)
-raw_train <- read_csv("./datos/hoteles-entrena.csv", show_col_types = FALSE)
-```
-
 ## 2.1 Vistazo a la información
 
 ### 2.1.2 Variables númericas
@@ -105,7 +105,7 @@ Las siguientes variables son categóricas:
  - `customer_type`
  - `required_car_parking_spaces`
 
-Existe una variable de 
+Existe una variable de fecha
  - `arrival_date`: Fecha de llegada
 
 
@@ -113,12 +113,12 @@ Primero analizaremos la distribución de las variables númericas.
 
 Podemos observar lo siguiente:
  - Existen valores extremos en las siguientes variables: `lead_time`, `stays_in_weekend_nights`, `stays_in_week_nights`, `previous_cancellations`, `previous_bookings_not_canceled`, `booking_changes`, `days_in_waiting_list`.
- - Existen valores negativos en la variable `average_daily_rate`
+ - Existen valores negativos en la variable `average_daily_rate`.
 
-Como medida preventiva, se eliminarán las observaciones que estén arriba del percentil 99 de las variables con valores extremos y se eliminarán los registros negativos de la variable "average_daily_rate" 
+Como medida preventiva, se eliminarán las observaciones que estén arriba del percentil 99 de las variables con valores extremos y se eliminarán los registros negativos de la variable `average_daily_rate` 
 
 ```{r}
-estadisticas_vars_numericas <-
+estadisticas_vars_numericas_entrena <-
 raw_train |> select(lead_time,
                     stays_in_weekend_nights,
                     stays_in_week_nights,
@@ -147,13 +147,20 @@ raw_train |> select(lead_time,
                values_to = "valor") |>
   pivot_wider(names_from = variable, values_from = valor)
 
-estadisticas_vars_numericas
+estadisticas_vars_numericas_entrena |> 
+  mutate_if(is.numeric, round, 3) |>
+  gt() |> 
+  cols_width(everything() ~  px(100)) |>
+  tab_options(table.width = pct(100),
+              table.font.size = px(14)) |>
+  tab_header(title = "Estadísticas de variables númericas en entrenamiento")
+  
 
 ```
-# Procedemos a observar la correlación entre variables, aliminando las observaciones anormales. Vemos que `previous_cancellations` tiene varianza cero, por lo que se eliminará esta variable en la predicción. Vemos además que no hay correlaciones fuertes entre los predictores númericos
+# Procedemos a observar la correlación entre variables, eliminando las observaciones anormales del análisis previo. Vemos que `previous_cancellations` tiene varianza cero, por lo que se eliminará esta variable en la predicción. Vemos además que no hay correlaciones fuertes entre los predictores númericos
 
 ```{r}
-
+corr_entrena <-
 raw_train |>
   select(    
     lead_time,
@@ -178,19 +185,78 @@ raw_train |>
     average_daily_rate             >  0,
   ) |>
   select(-previous_cancellations) |>
-  cor()
+  cor() |> 
+  as_tibble(rownames ="var") |>
+  mutate_if(is.numeric, round, 4)
+
+
+corr_entrena |>
+  gt() |>
+  tab_header(title = "Coeficientes de correlación para variables númericas en entrenamiento")
+
 ```
 
 ### 2.1.2 Variables categóricas
 Podemos observar que existen variables con valores nulos:
  - `agent`: 13.5 de las observaciones son NULL. Se decide no seguir usando esta variable.
  - `company`: 94.1% de las observaciones son NULL. Debido a la alta cantidad de valores nulos, se decide no utilizar esta variable.
- - `country`: 0.4% de las observaciones son NULL. Se decide agrupar esta variable por regiones, ya que existen 144 países distintos.
+ - `country`: 0.4% de las observaciones son NULL. Se decide agrupar esta variable por regiones, ya que existen 144 países distintos. Reducir las categorías será de mayor utilidad que 
+ 
+```{r}
+raw_train |> 
+  select(
+    meal,
+    country,
+    market_segment,
+    distribution_channel,
+    is_repeated_guest,
+    reserved_room_type,
+    assigned_room_type,
+    deposit_type,
+    agent,
+    company,
+    customer_type,
+    required_car_parking_spaces,
+  ) |>
+  summarise(
+    across(everything(), ~ n_distinct(.))
+            ) |> 
+  pivot_longer( cols = everything(),
+    values_to = "num_cat"
+    ) |>
+  gt() |>
+  cols_label(name = "Variable",
+             num_cat = "Número de categorías") |>
+  tab_header("Número de categorías distintas")
+  
+```
+
+
+Se reducirá el número de categorías de la variable  de la siguiente forma:
+
+ -  Se creará variable `area` con las siguientes agrupaciones:
+   - EUROPA: "PRT", "GBR", "IRL", "ESP", "NOR", "POL", "DEU", "BEL", "CHE", "GRC", "ITA", "DNK", "RUS", "SWE", "FIN", "LUX", "NLD", "SVN", "ALB", "UKR", "SRB", "EST", "LVA", "BLR", "AUT", "ZAF", "LTU", "CZE", "CYP", "MKD", "GIB", "BIH", "AND", "MLT", "SVK", "ISL", "BGR", "LIE", "MCO", "FRO", "MNE"
+   - ASIA: "OMN", "CHN", "CN", "IND", "TUR", "ISR", "KOR", "IRN", "IDN", "KAZ", "THA", "ARM", "JPN", "LKA" , "MYS", "JOR", "SYR", "PHL", "SAU", "SGP", "KWT", "VNM", "ARE", "QAT", "MDV", "UZB", "PAK", "MAC", "TWN", "HKG", "GEO", "AZE", "LBN", "IRQ", "BGD", "BHR", "TJK"
+   - AMERICA: "ARG", "USA, , "BRA", "MEX", "PRI", "CHL", "CRI", "HUN", "HRV", "VEN", "CUB", "COL", "SUR", "JAM", "URY", "PER", "ECU", "BOL", "BHS",  "KNA", "PAN", "BRB", "ABW", "SLV", "GTM"
+   - OCEANIA: "NZL", "PLW", "NCL", "KIR", "ASM" "AUS"
+   - AFRICA: "MOZ", "MOR", "AGO", "CPV", "DZA", "NGA", "CMR", "MUS", "COM", "CIV", "BDI", "EGY", "MWI", "MDG", "CAF", "ZWE", "BGR", "TGO", "DJI", "STP", "TUN", "ETH", "RWA", "BFA", "LBY", "GNB", "GHA", "KEN", "MRT", "SDN", "GAB"
+   - UNKNOWN: "NULL"
+
+
+```{r}
+raw_train  |> mutate(
+  area = case_when(
+    
+  )
+)
+
+```
+
 
  
 ### 2.1.3 Relaciones entre predictores
 
-Para eliminar colinealidad entre variables, checaremos el Factor de inflación de varianza (VIF) de los predictores númericos. Como podemos observar, 
+Para eliminar colinealidad entre variables, checaremos el Factor de inflación de varianza (VIF) de los predictores númericos. Dicho factor lo calcularemos aplicando una regresión logística sobre los predictores númericos, eliminando las observaciones atípicas y con varianza cero mostradas en el numeral 2.1.1. Antes de aplicar el modelo logístico, procederemos a normalizar los predictores. Como podemos observar en la tabla, el VIF está debajo de 2 para todos los predictores, por lo que se usaran los nueve predictores en la aplicación de los modelos. 
 
 ```{r}
 modelo_logistico_vif <- logistic_reg() |>
@@ -232,11 +298,8 @@ prep_train <- bake(receta_preparada, new_data = NULL)
 ajuste_logistico_vif <- flujo_logistico_vif |> 
   fit(data = raw_train)
 
-predicciones_logisticas_vif <- ajuste_logistico_vif |> predict(new_data = raw_test, type = "prob") |> select(.pred_children)
-predicciones_logisticas_vif |> mutate(id=1:n()) |> rename(probs=.pred_children) |> select(id, probs)  |> write_csv("./datos/predicciones_logisticas_vif.csv")
-
 # VIF
-vif(glm(children ~ ., data = prep_train, family = binomial))
+tidy(vif(glm(children ~ ., data = prep_train, family = binomial))) |> rename(vif = x) |> gt()
 ```
 
 
