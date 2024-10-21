@@ -21,7 +21,7 @@ library(GGally)
 library(xgboost)
 library(patchwork)
 #use_python("/Users/gerardorochabenigno/miniforge3/envs/py_tf/bin/python", required = TRUE)
-use_python("C:/Users/F15239/Desktop/condaGGB", required = TRUE)
+#use_python("C:/Users/F15239/Desktop/condaGGB", required = TRUE)
 
 
 log_loss_function <- function(pred, obs){
@@ -505,7 +505,8 @@ receta_proprocesamiento_inicial <- recipe(children ~., raw_train) |>
     reserved_room_type = as.factor(reserved_room_type),
     deposit_type = if_else(deposit_type %in% c("No_Deposit"), deposit_type, "Deposit"),
     deposit_type = as.factor(deposit_type),
-    required_car_parking_spaces = as.factor(required_car_parking_spaces)
+    required_car_parking_spaces = as.factor(required_car_parking_spaces),
+    customer_type = as.factor(customer_type)
   ) |>
   # Preprocesamiento de variable de fecha
   step_mutate(
@@ -1266,6 +1267,7 @@ log_loss_function(probs_entrena, binario_entrena)
 Solo variables númericas y dummys sobre variables categóricas 
 
  - PÉRDIDA LOGARÍTMICA DE PRUEBA: 0.15470
+ - Hay sobreajuste
 
 ```{r}
 set.seed(123) # para reproducibilidad
@@ -1292,21 +1294,21 @@ prep_entrena_xgboost_1 <- xgb.DMatrix(
 prep_prueba_xgboost_1 <- xgb.DMatrix(data = as.matrix(prep_prueba_xgboost_1)) 
 
 parametros <- list(
-  objective = "binary:logistic",  # Clasificación binaria
-  eval_metric = "logloss",        # Métrica de evaluación (puedes cambiar a 'auc' si prefieres)
-  max_depth = 6,                  # Profundidad de los árboles
-  eta = 0.1,                      # Tasa de aprendizaje
-  subsample = 0.8,                # Submuestreo de los datos
-  colsample_bytree = 0.8          # Submuestreo de las columnas
+  objective = "binary:logistic",  
+  eval_metric = "logloss",        
+  max_depth = 10,                  
+  eta = 0.1,                      
+  subsample = 0.8,                
+  colsample_bytree = 0.8          
 )
 
 # Realizar la validación cruzada con 10 particiones
 resultados_xgboost_1 <- xgb.cv(
   params = parametros,
   data = prep_entrena_xgboost_1,
-  nfold = 10,                   # Número de particiones (k-fold CV)
-  nrounds = 200,               # Número de iteraciones (épocas)
-  early_stopping_rounds = 10,  # Detener si no hay mejoras en 10 rondas
+  nfold = 5,                   
+  nrounds = 200,               
+  early_stopping_rounds = 10,  
   verbose = 1
 )
 
@@ -1352,7 +1354,10 @@ receta_xgboost_2 <- recipe(children ~ ., data = raw_train_2) |>
                    starts_with("hotel"):starts_with("meal") +
                    starts_with("meal"):average_daily_rate +
                    starts_with("meal"):adults +
-                   starts_with("reserved_room_type"):average_daily_rate
+                   starts_with("reserved_room_type"):average_daily_rate +
+                   lead_time:average_daily_rate +
+                   stays_in_weekend_nights:stays_in_week_nights +
+                   starts_with("deposit_type"):average_daily_rate
   )
 
 # Preparamos receta
@@ -1369,21 +1374,21 @@ prep_entrena_xgboost_2 <- xgb.DMatrix(
 prep_prueba_xgboost_2 <- xgb.DMatrix(data = as.matrix(prep_prueba_xgboost_2)) 
 
 parametros <- list(
-  objective = "binary:logistic",  # Clasificación binaria
-  eval_metric = "logloss",        # Métrica de evaluación (puedes cambiar a 'auc' si prefieres)
-  max_depth = 6,                  # Profundidad de los árboles
-  eta = 0.01,                      # Tasa de aprendizaje
-  subsample = 0.8,                # Submuestreo de los datos
-  colsample_bytree = 0.8          # Submuestreo de las columnas
+  objective = "binary:logistic",  
+  eval_metric = "logloss",        
+  max_depth = 5,                  
+  eta = 0.1,                      
+  subsample = 0.8,                
+  colsample_bytree = 0.5          # Submuestreo de las columnas
 )
 
 # Realizar la validación cruzada con 10 particiones
 resultados_xgboost_2 <- xgb.cv(
   params = parametros,
   data = prep_entrena_xgboost_2,
-  nfold = 10,                   # Número de particiones (k-fold CV)
-  nrounds = 200,               # Número de iteraciones (épocas)
-  early_stopping_rounds = 10,  # Detener si no hay mejoras en 10 rondas
+  nfold = 15,                   
+  nrounds = 300,               
+  early_stopping_rounds = 10,  
   verbose = 1
 )
 
@@ -1406,3 +1411,208 @@ log_loss_function(
   ifelse(raw_train_2$children == "none", 0, 1)
   )
 ```
+
+### 4.4.3 Tercer intento
+
+```{r}
+receta_proprocesamiento_inicial_2 <- recipe(children ~., raw_train) |>
+  # Removemos columnas con valores faltantes
+  step_rm(agent, company) |>
+  # Aplicamos normalización a las variables númericas 
+  step_normalize(
+    lead_time,
+    stays_in_weekend_nights,
+    stays_in_week_nights,
+    adults,
+    previous_bookings_not_canceled,
+    booking_changes,
+    days_in_waiting_list,
+    average_daily_rate,
+    total_of_special_requests,
+    previous_cancellations
+  ) |>
+  # Preprocesamiento de variables catégoricas
+  step_mutate(
+    hotel = as.factor(hotel),
+    meal = if_else(meal %in% c("SC", "Undefined"), "SC/Undefined", meal),
+    meal = as.factor(meal),
+    country = if_else(!(country %in% paises), "NULL", country),
+    country = ifelse(table(country)[country] < 100, "Otros", country),
+    country = as.factor(country),
+    distribution_channel = as.factor(distribution_channel),
+    is_repeated_guest = as.factor(is_repeated_guest),
+    reserved_room_type = as.factor(reserved_room_type),
+    deposit_type = if_else(deposit_type %in% c("No_Deposit"), deposit_type, "Deposit"),
+    deposit_type = as.factor(deposit_type),
+    required_car_parking_spaces = as.factor(required_car_parking_spaces),
+    customer_type = as.factor(customer_type),
+    market_segment = as.factor(market_segment),
+    assigned_room_type = as.factor(assigned_room_type)
+  ) |>
+  # Preprocesamiento de variable de fecha
+  step_mutate(
+    arrival_date = ceiling_date(arrival_date, "month"),
+    arrival_date_month = month(arrival_date),
+    arrival_date_month = as.factor(arrival_date_month),
+    arrival_date_year = year(arrival_date),
+    arrival_date_year = as.factor(arrival_date_year)
+  ) |>
+  step_rm(arrival_date)
+  
+  
+receta_inicial_preparada_2 <- prep(receta_proprocesamiento_inicial_2)
+raw_train_3 <- bake(receta_inicial_preparada_2, new_data = NULL)
+```
+
+```{r}
+set.seed(123) # para reproducibilidad
+
+# Aplicamos preprocesamiento inicial a muetsra de entrenamiento y prueba
+raw_train_3 <- bake(receta_inicial_preparada_2, new_data=NULL)
+raw_test_3  <- bake(receta_inicial_preparada_2, new_data=raw_test)
+
+# Receta
+receta_xgboost_3 <- recipe(children ~ ., data = raw_train_3) |>
+  step_dummy(all_factor_predictors()) #|>
+#  step_interact( ~
+#                   starts_with("hotel"):lead_time +
+#                   starts_with("hotel"):starts_with("arrival_date") +
+#                   starts_with("hotel"):starts_with("area") + 
+#                   starts_with("hotel"):average_daily_rate + 
+#                   starts_with("hotel"):starts_with("meal") +
+#                   starts_with("meal"):average_daily_rate +
+#                   starts_with("meal"):adults +
+#                   starts_with("reserved_room_type"):average_daily_rate +
+#                   lead_time:average_daily_rate +
+#                   stays_in_weekend_nights:stays_in_week_nights +
+#                   starts_with("deposit_type"):average_daily_rate
+#  )
+
+# Preparamos receta
+receta_preparada_xgboost_3 <- prep(receta_xgboost_3)
+
+# Obtenemos datos preprocesados de entrenamiento y prueba
+prep_entrena_xgboost_3 <- bake(receta_preparada_xgboost_3, new_data = NULL) |> mutate(children = if_else(children == "none", 0, 1))
+prep_prueba_xgboost_3 <- bake(receta_preparada_xgboost_3, new_data = raw_test_3) 
+
+prep_entrena_xgboost_3 <- xgb.DMatrix(
+  data = as.matrix(prep_entrena_xgboost_3 |> select(-children)),
+  label = prep_entrena_xgboost_3 |> pull(children)
+  )
+prep_prueba_xgboost_3 <- xgb.DMatrix(data = as.matrix(prep_prueba_xgboost_3)) 
+
+parametros <- list(
+  objective = "binary:logistic",  
+  eval_metric = "logloss",        
+  max_depth = 6, # 145275+0.007614 con cinco                 
+  eta = 0.1,                      
+  subsample = 0.7, # submuestreo de las filas 145275+0.007614 con 0.8                 
+  colsample_bytree = 0.5          # Submuestreo de las columnas
+)
+
+# Realizar la validación cruzada con 10 particiones
+resultados_xgboost_3 <- xgb.cv(
+  params = parametros,
+  data = prep_entrena_xgboost_3,
+  nfold = 15,                   
+  nrounds = 500,               
+  early_stopping_rounds = 10,  
+  verbose = 1
+)
+
+iter_optima <- resultados_xgboost_3$best_iteration  # Extraer el número óptimo de iteraciones
+modelo_xgboost_3 <- xgb.train(
+  params = parametros,
+  data = prep_entrena_xgboost_3,
+  nrounds = iter_optima,  # Usar el número óptimo de rondas
+  verbose = 1
+)
+
+# Predicciones en el nuevo conjunto de datos
+preds_prueba_xgboost_3 <- predict(modelo_xgboost_3, prep_prueba_xgboost_3)
+preds_prueba_xgboost_3 |> as_tibble() |> mutate(id = 1:n()) |> rename(probs = value) |> select(id, probs) |> write_csv("./datos/corregido/predicciones_xgboost_3.csv")
+
+
+# Predicciones en cojunto de entrenamiento
+log_loss_function(
+  modelo_xgboost_3 |> predict(prep_entrena_xgboost_3) |> as.vector(),
+  ifelse(raw_train_3$children == "none", 0, 1)
+  )
+```
+### 4.4.4 Cuarto intento
+```{r}
+set.seed(123) # para reproducibilidad
+
+# Aplicamos preprocesamiento inicial a muetsra de entrenamiento y prueba
+raw_train_3 <- bake(receta_inicial_preparada_2, new_data=NULL)
+raw_test_3  <- bake(receta_inicial_preparada_2, new_data=raw_test)
+
+# Receta
+receta_xgboost_3 <- recipe(children ~ ., data = raw_train_3) |>
+  step_dummy(all_factor_predictors()) |>
+  step_interact( ~
+                   starts_with("hotel"):lead_time +
+                   starts_with("hotel"):starts_with("arrival_date") +
+                   starts_with("hotel"):starts_with("country") + 
+                   starts_with("hotel"):average_daily_rate + 
+                   starts_with("hotel"):starts_with("meal") +
+                   starts_with("meal"):average_daily_rate +
+                   starts_with("meal"):adults +
+                   starts_with("reserved_room_type"):average_daily_rate +
+                   lead_time:average_daily_rate +
+                   stays_in_weekend_nights:stays_in_week_nights +
+                   starts_with("deposit_type"):average_daily_rate
+  )
+
+# Preparamos receta
+receta_preparada_xgboost_3 <- prep(receta_xgboost_3)
+
+# Obtenemos datos preprocesados de entrenamiento y prueba
+prep_entrena_xgboost_3 <- bake(receta_preparada_xgboost_3, new_data = NULL) |> mutate(children = if_else(children == "none", 0, 1))
+prep_prueba_xgboost_3 <- bake(receta_preparada_xgboost_3, new_data = raw_test_3) 
+
+prep_entrena_xgboost_3 <- xgb.DMatrix(
+  data = as.matrix(prep_entrena_xgboost_3 |> select(-children)),
+  label = prep_entrena_xgboost_3 |> pull(children)
+  )
+prep_prueba_xgboost_3 <- xgb.DMatrix(data = as.matrix(prep_prueba_xgboost_3)) 
+
+parametros <- list(
+  objective = "binary:logistic",  
+  eval_metric = "logloss",        
+  max_depth = 5, # 10.144942+0.008235 con seis          
+  eta = 0.1,                      
+  subsample = 0.5,                
+  colsample_bytree = 0.5          # Submuestreo de las columnas
+)
+
+# Realizar la validación cruzada con 10 particiones
+resultados_xgboost_3 <- xgb.cv(
+  params = parametros,
+  data = prep_entrena_xgboost_3,
+  nfold = 12,                   
+  nrounds = 500,               
+  early_stopping_rounds = 10,  
+  verbose = 1
+)
+
+iter_optima <- resultados_xgboost_3$best_iteration  # Extraer el número óptimo de iteraciones
+modelo_xgboost_3 <- xgb.train(
+  params = parametros,
+  data = prep_entrena_xgboost_3,
+  nrounds = iter_optima,  # Usar el número óptimo de rondas
+  verbose = 1
+)
+
+# Predicciones en el nuevo conjunto de datos
+preds_prueba_xgboost_3 <- predict(modelo_xgboost_3, prep_prueba_xgboost_3)
+preds_prueba_xgboost_3 |> as_tibble() |> mutate(id = 1:n()) |> rename(probs = value) |> select(id, probs) |> write_csv("./datos/corregido/predicciones_xgboost_4.csv")
+
+
+# Predicciones en cojunto de entrenamiento
+log_loss_function(
+  modelo_xgboost_3 |> predict(prep_entrena_xgboost_3) |> as.vector(),
+  ifelse(raw_train_3$children == "none", 0, 1)
+  )
+```
+
