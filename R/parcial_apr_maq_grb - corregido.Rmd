@@ -1504,10 +1504,10 @@ prep_prueba_xgboost_3 <- xgb.DMatrix(data = as.matrix(prep_prueba_xgboost_3))
 parametros <- list(
   objective = "binary:logistic",  
   eval_metric = "logloss",        
-  max_depth = 6, # 145275+0.007614 con cinco                 
+  max_depth = 10, # 145275+0.007614 con cinco    # 0.143992 con seis    0.143249+0.007815 con 7       
   eta = 0.1,                      
-  subsample = 0.7, # submuestreo de las filas 145275+0.007614 con 0.8                 
-  colsample_bytree = 0.5          # Submuestreo de las columnas
+  subsample = 0.7, # submuestreo de las filas 145275+0.007614 con 0.8   
+  colsample_bytree = 0.5
 )
 
 # Realizar la validación cruzada con 10 particiones
@@ -1580,9 +1580,9 @@ prep_prueba_xgboost_3 <- xgb.DMatrix(data = as.matrix(prep_prueba_xgboost_3))
 parametros <- list(
   objective = "binary:logistic",  
   eval_metric = "logloss",        
-  max_depth = 5, # 10.144942+0.008235 con seis          
+  max_depth = 6, # 145275+0.007614 con cinco                 
   eta = 0.1,                      
-  subsample = 0.5,                
+  subsample = 0.7, # submuestreo de las filas 145275+0.007614 con 0.8                 
   colsample_bytree = 0.5          # Submuestreo de las columnas
 )
 
@@ -1590,7 +1590,7 @@ parametros <- list(
 resultados_xgboost_3 <- xgb.cv(
   params = parametros,
   data = prep_entrena_xgboost_3,
-  nfold = 12,                   
+  nfold = 15,                   
   nrounds = 500,               
   early_stopping_rounds = 10,  
   verbose = 1
