@@ -5,6 +5,8 @@ date: "2024-10-12"
 ---
 ```{r, echo=FALSE, include=FALSE}
 rm(list=ls())
+library(doParallel)
+library(parallel)
 library(tidymodels)
 library(tidyverse)
 library(keras)
@@ -552,9 +554,11 @@ ggplot(aux, aes(x=children, y = pct, fill = factor(hotel))) + geom_bar(position 
 - arrival_date: Las reservas de hotel con niños suceden más en los meses de agosto y septiembre. Es posible crear una variable factor indicando el mes de la reserva, sin inlcuir el día o el año
 
 ```{r}
-aux <- raw_train_2 |> select(children, arrival_date) |> mutate(arrival_date = month(arrival_date)) |> group_by(children, arrival_date) |> summarise(n = n()) |> mutate(pct = n/sum(n))
-ggplot(aux, aes(x=arrival_date, y = pct, fill = factor(children))) + geom_bar(position = "dodge", stat = "identity") + 
-  scale_x_continuous(breaks = 1:12)
+aux <- raw_train_2 |> select(children, arrival_date_month) |>  group_by(children, arrival_date_month) |> summarise(n = n()) |> mutate(pct = n/sum(n)) |> arrange(children, pct)
+ggplot(aux, aes(x=arrival_date_month, y = pct, fill = factor(children))) + geom_bar(position = "dodge", stat = "identity") #+ 
+  #scale_x_continuous(breaks = 1:12)
+
+# 12, 2, 10, 11, 4, 1, 6, 7, 3, 5, 8, 9 
 
 ```
 
@@ -1134,132 +1138,6 @@ log_loss_function(
   )
 ```
 
-
-
-
-## 4.3 Maquina de soporte vectorial
-
-```{r}
-# Proprocesamiento de los datos de entrenamiento y prueba
-receta_2 <- recipe(children ~ 
-                     lead_time +  
-                     adults +
-                     stays_in_weekend_nights +
-                     stays_in_week_nights + 
-                     booking_changes +
-                     days_in_waiting_list + 
-                     average_daily_rate +
-                     total_of_special_requests +
-                     hotel +
-                     meal +
-                     distribution_channel +
-                     is_repeated_guest +
-                     reserved_room_type +
-                     assigned_room_type +
-                     deposit_type +
-                     customer_type +
-                     required_car_parking_spaces+
-                     arrival_date,
-                   data = raw_train) |>
-  step_normalize(lead_time, 
-                 adults, 
-                 stays_in_weekend_nights, 
-                 stays_in_week_nights, 
-                 booking_changes, 
-                 days_in_waiting_list, 
-                 average_daily_rate, 
-                 total_of_special_requests) |>
-  step_mutate(hotel = as.factor(hotel),
-              meal = if_else(meal == "SC" | meal == "Undefined", "SC/Undefined", meal),
-              meal = as.factor(meal), 
-              distribution_channel = as.factor(distribution_channel), 
-              is_repeated_guest = as.factor(is_repeated_guest), 
-              reserved_room_type = as.factor(reserved_room_type), 
-              assigned_room_type = as.factor(assigned_room_type), 
-              deposit_type = if_else(deposit_type == "No_Deposit", "No_Deposit", "Deposit"),
-              deposit_type = as.factor(deposit_type), 
-              customer_type = as.factor(customer_type),
-              required_car_parking_spaces = as.factor(required_car_parking_spaces),
-              mes = month(arrival_date),
-              mes = as.factor(mes),
-              año = year(arrival_date),
-              año = as.factor(año)) |>
-  step_dummy(hotel, 
-             meal, 
-             distribution_channel,
-             is_repeated_guest,
-             reserved_room_type, 
-             assigned_room_type, 
-             deposit_type, 
-             customer_type, 
-             required_car_parking_spaces,
-             mes,
-             año)  |>
-  step_rm(arrival_date) |>
-  step_interact(~ starts_with("hotel"):starts_with("lead_time")+ 
-                starts_with("mes"):starts_with("año")+ 
-                starts_with("mes"):starts_with("lead_time")+
-                starts_with("adults"):starts_with("meal")
-                ) 
-
-receta_preparada <- prep(receta_2)
-
-prep_train <- bake(receta_preparada, new_data = NULL) |> select(-children)
-prep_test <- bake(receta_preparada, new_data = raw_test)
-
-
-target_entrena <- ifelse(raw_train$children == "none", 0, 1)
-
-# Keras necesita tensores
-X_entrena <- as.matrix(as.data.frame(prep_train))
-X_entrena <- as.matrix(as.numeric(X_entrena))
-
-X_entrena <- array_reshape(X_entrena, c(nrow(prep_train), ncol(prep_train)))
-
-
-
-X_prueba <- as.matrix(as.data.frame(prep_test))
-X_prueba <- as.matrix(as.numeric(X_prueba))
-X_prueba <- array_reshape(X_prueba, c(nrow(prep_test), ncol(prep_test)))
-
-modelo_red_neuronal_2 <- keras_model_sequential() |>
-  layer_dense(units = 128, activation = 'relu', input_shape = ncol(prep_train)) |>
-  layer_dropout(rate = 0.3) |>
-  layer_dense(units = 64, activation = 'relu') |>
-  layer_dropout(rate = 0.3) |>
-  layer_dense(units = 32, activation = 'relu') |>
-  layer_dense(units = 1, activation = 'sigmoid') 
-
-modelo_red_neuronal_2 |> compile(
-  loss = 'binary_crossentropy',
-  optimizer =tf$keras$optimizers$legacy$SGD(learning_rate = 0.001),
-  metrics = 'accuracy'
-)
-class_weight <- list("0" = 1, "1" = 2)
-historia_2 <- modelo_red_neuronal_2 |> fit(
-  X_entrena, 
-  y_entrena, 
-  epochs = 300,  # Ajusta el número de épocas según sea necesario
-  batch_size =500,  # Ajusta el tamaño del lote según sea necesario
-  verbose = 1,  # Cambia a 0 si no quieres imprimir el progreso
-  class_weight = class_weight,
-  validation_split = 0.2
-  )
-
-# prediccion
-predicciones_red_neuronal_2 <- modelo_red_neuronal_2 |> predict(X_prueba) |> as.vector()
-predicciones_red_neuronal_2 <- tibble(id = 1:nrow(raw_test),
-                                    probs = predicciones_red_neuronal_2)
-
-predicciones_red_neuronal |> write_csv("./datos/predicciones_red_neuronal_2.csv")
-
-# Perdida logaritmica de entrenamiento
-binario_entrena <- ifelse(raw_train$children == "none", 0, 1)
-probs_entrena   <- modelo_red_neuronal_2 |> predict(as.matrix(X_entrena)) |> as.vector()
-log_loss_function(probs_entrena, binario_entrena)
-```
-
-
 ## 4.4 XGboost
 
 # 4.4.1 Primer intento
@@ -1473,6 +1351,7 @@ raw_test_3  <- bake(receta_inicial_preparada_2, new_data=raw_test)
 
 # Receta
 receta_xgboost_3 <- recipe(children ~ ., data = raw_train_3) |>
+#  step_rm(reserved_room_type) |>
   step_dummy(all_factor_predictors()) #|>
 #  step_interact( ~
 #                   starts_with("hotel"):lead_time +
@@ -1507,24 +1386,27 @@ parametros <- list(
   max_depth = 10, # 145275+0.007614 con cinco    # 0.143992 con seis    0.143249+0.007815 con 7       
   eta = 0.1,                      
   subsample = 0.7, # submuestreo de las filas 145275+0.007614 con 0.8   
-  colsample_bytree = 0.5
+  colsample_bytree = 0.5#,
+  #scale_pos_weight = sum(if_else(raw_train_3$children == "none", 1, 0))/sum(if_else(raw_train_3$children == "children", 1, 0))
 )
+
 
 # Realizar la validación cruzada con 10 particiones
 resultados_xgboost_3 <- xgb.cv(
   params = parametros,
   data = prep_entrena_xgboost_3,
   nfold = 15,                   
-  nrounds = 500,               
+  nrounds = 600,               
   early_stopping_rounds = 10,  
   verbose = 1
 )
 
 iter_optima <- resultados_xgboost_3$best_iteration  # Extraer el número óptimo de iteraciones
+
 modelo_xgboost_3 <- xgb.train(
   params = parametros,
   data = prep_entrena_xgboost_3,
-  nrounds = iter_optima,  # Usar el número óptimo de rondas
+  nrounds = iter_optima,  # Usar el número óptimo de iteraciones
   verbose = 1
 )
 
@@ -1539,6 +1421,7 @@ log_loss_function(
   ifelse(raw_train_3$children == "none", 0, 1)
   )
 ```
+
 ### 4.4.4 Cuarto intento
 ```{r}
 set.seed(123) # para reproducibilidad
@@ -1614,5 +1497,347 @@ log_loss_function(
   modelo_xgboost_3 |> predict(prep_entrena_xgboost_3) |> as.vector(),
   ifelse(raw_train_3$children == "none", 0, 1)
   )
+```
+
+
+
+### 4.4.5 Quinto intento
+
+Usaremos el modelo de 4.4.3 realizando bagging
+
+```{r}
+set.seed(123) # para reproducibilidad
+
+# Aplicamos preprocesamiento inicial a muetsra de entrenamiento y prueba
+raw_train_3 <- bake(receta_inicial_preparada_2, new_data=NULL)
+raw_test_3  <- bake(receta_inicial_preparada_2, new_data=raw_test)
+
+# Hacerlo dentro o fuera del bucle es irrelevante
+receta_xgboost_5 <- recipe(children ~ ., data = raw_train_3) |>
+  step_dummy(all_factor_predictors()) |>
+  prep()
+
+
+preds_boot_xgboost_1 <- matrix(NA, nrow = nrow(raw_test_3), ncol = 200)
+
+parametros <- list(
+  objective = "binary:logistic",
+  eval_metric = "logloss",
+  max_depth = 10,
+  eta = 0.1,
+  subsample = 0.7,
+  colsample_bytree = 0.5
+)
+
+procesar_iteracion <- function(i) {
+  # Muestra bootstrap
+  muestra_boot <- slice_sample(raw_train_3, prop = 1, by = children)
+
+  # Preprocesamos la muestra bootstrap
+  prep_entrena_xgboost_5 <- bake(receta_xgboost_5, new_data = muestra_boot) |>
+    mutate(children = if_else(children == "none", 0, 1))
+
+  # Convertimos a formato DMatrix
+  prep_entrena_xgboost_5 <- xgb.DMatrix(
+    data = as.matrix(prep_entrena_xgboost_5 |> select(-children)),
+    label = prep_entrena_xgboost_5 |> pull(children)
+  )
+  
+  prep_prueba_xgboost_5 <- bake(receta_xgboost_5, new_data = raw_test_3) |> as.matrix()
+  dtest <- xgb.DMatrix(data = prep_prueba_xgboost_5)
+
+  # Validación cruzada
+  resultados_xgboost_5 <- xgb.cv(
+    params = parametros,
+    data = prep_entrena_xgboost_5,
+    nfold = 15,
+    nrounds = 600,
+    early_stopping_rounds = 10,
+    verbose = 0
+  )
+  
+  # Entrenamos el modelo con las iteraciones óptimas
+  iter_optima <- resultados_xgboost_5$best_iteration
+  modelo_xgboost_5 <- xgb.train(
+    params = parametros,
+    data = prep_entrena_xgboost_5,
+    nrounds = iter_optima,
+    verbose = 0
+  )
+
+  # Predicción en el conjunto de prueba
+  preds <- predict(modelo_xgboost_5, dtest)
+  
+  # Retornamos las predicciones
+  return(preds)
+}
+
+# Usamos paralelización
+num_cores <- detectCores() - 1
+cl <- makeCluster(num_cores)
+registerDoParallel(cl)
+
+# Ejecutamos las iteraciones en paralelo
+preds_boot_xgboost_1 <- foreach(i = 1:200, .combine = 'cbind', .packages = c("xgboost", "dplyr", "recipes")) %dopar% {
+  procesar_iteracion(i)
+}
+
+preds_prom_boot_xgboost_1 <- rowMeans(preds_boot_xgboost_1) |> as_tibble() |> rename(probs = value)
+preds_prom_boot_xgboost_1 |> mutate(id = 1:nrow(preds_prom_boot_xgboost_1)) |> select(id, probs) |> write_csv("./datos/corregido/predicciones_xgboost_5.csv")
+```
+
+### 4.4.6 Sexto intento
+
+```{r}
+aux <- raw_train |> select(children, arrival_date) |> mutate(arrival_date_year= year(arrival_date)) |>
+  summarise(n=n(), .by=c("children", "arrival_date_year")) |> filter(children=="children") |> mutate(prop_anio = n/sum(n)) |>
+  select(arrival_date_year, prop_anio)
+
+raw_train_x <- left_join(raw_train |> mutate(arrival_date_year=year(arrival_date)), aux, by="arrival_date_year")
+raw_test_x <- left_join(raw_test |> mutate(arrival_date_year=year(arrival_date)), aux, by="arrival_date_year")
+
+
+aux <- raw_train |> select(children, arrival_date) |> mutate(arrival_date_month= month(arrival_date)) |>
+  summarise(n=n(), .by=c("children", "arrival_date_month")) |> filter(children=="children") |> mutate(prop_mes = n/sum(n)) |>
+  select(arrival_date_month, prop_mes) |> arrange(prop_mes)
+
+raw_train_x <- left_join(raw_train_x |> mutate(arrival_date_month=month(arrival_date)), aux, by="arrival_date_month")
+raw_test_x <- left_join(raw_test_x |> mutate(arrival_date_month=month(arrival_date)), aux, by="arrival_date_month")
+
+  
+```
+
+
+```{r}
+receta_proprocesamiento_inicial_3 <- recipe(children ~., raw_train) |>
+  # Removemos columnas con valores faltantes
+  step_rm(agent, company) |>
+  # Aplicamos normalización a las variables númericas 
+  step_normalize(
+    lead_time,
+    stays_in_weekend_nights,
+    stays_in_week_nights,
+    adults,
+    previous_bookings_not_canceled,
+    booking_changes,
+    days_in_waiting_list,
+    average_daily_rate,
+    total_of_special_requests,
+    previous_cancellations
+  ) |>
+  # Preprocesamiento de variables catégoricas
+  step_mutate(
+    hotel = as.factor(hotel),
+    meal = if_else(meal %in% c("SC", "Undefined"), "SC/Undefined", meal),
+    meal = as.factor(meal),
+    country = if_else(!(country %in% paises), "Otros", country),
+    country = if_else(country=="NULL", "Otros", country),
+    country = ifelse(table(country)[country] < 100, "Otros", country),
+    country = as.factor(country),
+    distribution_channel = as.factor(distribution_channel),
+    #is_repeated_guest = as.factor(is_repeated_guest),
+    reserved_room_type = factor(reserved_room_type, levels = c("O", "N", "M", "L", "K", "J", "I", "H","G","F","E","D","C","B","A")),
+    reserved_room_type = as.numeric(reserved_room_type),
+    deposit_type = if_else(deposit_type %in% c("No_Deposit"), deposit_type, "Deposit"),
+    deposit_type = as.factor(deposit_type),
+    required_car_parking_spaces = as.factor(required_car_parking_spaces),
+    customer_type = as.factor(customer_type),
+    market_segment = as.factor(market_segment),
+    assigned_room_type = factor(assigned_room_type, levels = c("O", "N", "M", "L", "K", "J", "I", "H","G","F","E","D","C","B","A")),
+    assigned_room_type = as.numeric(assigned_room_type)
+  ) |>
+   #Preprocesamiento de variable de fecha
+  step_mutate(
+    arrival_date = ceiling_date(arrival_date, "month"),
+    arrival_date_month = month(arrival_date),
+    arrival_date_month = as.factor(arrival_date_month),
+    #arrival_date_month = as.numeric(arrival_date_month),
+    arrival_date_year = year(arrival_date),
+    arrival_date_year = as.factor(arrival_date_year)
+    #arrival_date_year = as.numeric(arrival_date_year)
+  ) |>
+  step_rm(arrival_date)
+  
+  
+receta_inicial_preparada_3 <- prep(receta_proprocesamiento_inicial_3)
+raw_train_4 <- bake(receta_inicial_preparada_3, new_data = NULL)
+```
+
+
+
+
+```{r}
+set.seed(123) # para reproducibilidad
+
+
+# Aplicamos preprocesamiento inicial a muetsra de entrenamiento y prueba
+raw_train_4 <- bake(receta_inicial_preparada_3, new_data=NULL)
+raw_test_4  <- bake(receta_inicial_preparada_3, new_data=raw_test_x)
+
+column_names <- colnames(raw_train_4)
+restricciones_nombres <- list(c("assigned_room_type", "reserved_room_type"))
+
+restricciones <- lapply(restricciones_nombres, function(x){
+  match(x, column_names) -1
+})
+
+
+# Receta
+receta_xgboost_6 <- recipe(children ~ ., data = raw_train_4) |>
+#  step_rm(reserved_room_type) |>
+  step_dummy(all_factor_predictors()) #|>
+#  step_interact( ~
+#                   starts_with("hotel"):lead_time +
+#                   starts_with("hotel"):starts_with("arrival_date") +
+#                   starts_with("hotel"):starts_with("area") + 
+#                   starts_with("hotel"):average_daily_rate + 
+#                   starts_with("hotel"):starts_with("meal") +
+#                   starts_with("meal"):average_daily_rate +
+#                   starts_with("meal"):adults +
+#                   starts_with("reserved_room_type"):average_daily_rate +
+#                   lead_time:average_daily_rate +
+#                   stays_in_weekend_nights:stays_in_week_nights +
+#                   starts_with("deposit_type"):average_daily_rate
+#  )
+
+# Preparamos receta
+receta_preparada_xgboost_6 <- prep(receta_xgboost_6)
+
+# Obtenemos datos preprocesados de entrenamiento y prueba
+prep_entrena_xgboost_6 <- bake(receta_preparada_xgboost_6, new_data = NULL) |> mutate(children = if_else(children == "none", 0, 1))
+prep_prueba_xgboost_6 <- bake(receta_preparada_xgboost_6, new_data = raw_test_4) 
+
+prep_entrena_xgboost_6 <- xgb.DMatrix(
+  data = as.matrix(prep_entrena_xgboost_6 |> select(-children)),
+  label = prep_entrena_xgboost_6 |> pull(children)
+  )
+prep_prueba_xgboost_6 <- xgb.DMatrix(data = as.matrix(prep_prueba_xgboost_6)) 
+
+parametros <- list(
+  objective = "binary:logistic",  
+  eval_metric = "logloss",        
+  max_depth = 10, # 145275+0.007614 con cinco    # 0.143992 con seis    0.143249+0.007815 con 7       
+  eta = 0.1,                      
+  subsample = 0.7, # submuestreo de las filas 145275+0.007614 con 0.8   
+  colsample_bytree = 0.5#,
+  #scale_pos_weight = sum(if_else(raw_train_3$children == "none", 1, 0))/sum(if_else(raw_train_3$children == "children", 1, 0))
+)
+
+
+# Realizar la validación cruzada con 10 particiones
+resultados_xgboost_3 <- xgb.cv(
+  params = parametros,
+  data = prep_entrena_xgboost_6,
+  nfold = 15,                   
+  nrounds = 600,               
+  early_stopping_rounds = 20,  
+  verbose = 1
+)
+
+iter_optima <- resultados_xgboost_6$best_iteration  # Extraer el número óptimo de iteraciones
+
+modelo_xgboost_6 <- xgb.train(
+  params = parametros,
+  data = prep_entrena_xgboost_6,
+  nrounds = iter_optima,  # Usar el número óptimo de iteraciones
+  verbose = 1
+)
+
+# Predicciones en el nuevo conjunto de datos
+preds_prueba_xgboost_6 <- predict(modelo_xgboost_6, prep_prueba_xgboost_6)
+preds_prueba_xgboost_6 |> as_tibble() |> mutate(id = 1:n()) |> rename(probs = value) |> select(id, probs) |> write_csv("./datos/corregido/predicciones_xgboost_6.csv")
+
+
+# Predicciones en cojunto de entrenamiento
+log_loss_function(
+  modelo_xgboost_6 |> predict(prep_entrena_xgboost_6) |> as.vector(),
+  ifelse(raw_train_4$children == "none", 0, 1)
+  )
+```
+
+
+
+```{r}
+set.seed(123) # para reproducibilidad
+
+# Aplicamos preprocesamiento inicial a muetsra de entrenamiento y prueba
+raw_train_4 <- bake(receta_inicial_preparada_3, new_data=NULL)
+raw_test_4  <- bake(receta_inicial_preparada_3, new_data=raw_test)
+
+# Hacerlo dentro o fuera del bucle es irrelevante
+receta_xgboost_6 <- recipe(children ~ ., data = raw_train_4) |>
+  step_dummy(all_factor_predictors()) |>
+  prep()
+
+
+preds_boot_xgboost_2 <- matrix(NA, nrow = nrow(raw_test_4), ncol = 100)
+
+parametros <- list(
+  objective = "binary:logistic",  
+  eval_metric = "logloss",        
+  max_depth = 10, # 145275+0.007614 con cinco    # 0.143992 con seis    0.143249+0.007815 con 7       
+  eta = 0.1,                      
+  subsample = 0.7, # submuestreo de las filas 145275+0.007614 con 0.8   
+  colsample_bytree = 0.5#,
+  #scale_pos_weight = sum(if_else(raw_train_3$children == "none", 1, 0))/sum(if_else(raw_train_3$children == "children", 1, 0))
+)
+
+procesar_iteracion <- function(i) {
+  # Muestra bootstrap
+  muestra_boot <- slice_sample(raw_train_4, prop = 1, by = children)
+
+  # Preprocesamos la muestra bootstrap
+  prep_entrena_xgboost_6 <- bake(receta_xgboost_6, new_data = muestra_boot) |>
+    mutate(children = if_else(children == "none", 0, 1))
+
+  # Convertimos a formato DMatrix
+  prep_entrena_xgboost_6 <- xgb.DMatrix(
+    data = as.matrix(prep_entrena_xgboost_6 |> select(-children)),
+    label = prep_entrena_xgboost_6 |> pull(children)
+  )
+  
+  prep_prueba_xgboost_6 <- bake(receta_xgboost_6, new_data = raw_test_4) |> as.matrix()
+  dtest <- xgb.DMatrix(data = prep_prueba_xgboost_6)
+
+  # Validación cruzada
+  resultados_xgboost_6 <- xgb.cv(
+    params = parametros,
+    data = prep_entrena_xgboost_6,
+    nfold = 15,
+    nrounds = 600,
+    early_stopping_rounds = 10,
+    verbose = 0
+  )
+  
+  # Entrenamos el modelo con las iteraciones óptimas
+  iter_optima <- resultados_xgboost_6$best_iteration
+  modelo_xgboost_6 <- xgb.train(
+    params = parametros,
+    data = prep_entrena_xgboost_6,
+    nrounds = iter_optima,
+    verbose = 0
+  )
+
+  # Predicción en el conjunto de prueba
+  preds <- predict(modelo_xgboost_6, dtest)
+  
+  # Retornamos las predicciones
+  return(preds)
+}
+
+# Usamos paralelización
+num_cores <- detectCores() - 1
+cl <- makeCluster(num_cores)
+registerDoParallel(cl)
+
+# Ejecutamos las iteraciones en paralelo
+preds_boot_xgboost_2 <- foreach(i = 1:200, .combine = 'cbind', .packages = c("xgboost", "dplyr", "recipes")) %dopar% {
+  procesar_iteracion(i)
+}
+
+preds_prom_boot_xgboost_2 <- rowMeans(preds_boot_xgboost_2) |> as_tibble() |> rename(probs = value)
+preds_prom_boot_xgboost_2 |> mutate(id = 1:nrow(preds_prom_boot_xgboost_2)) |> select(id, probs) |> write_csv("./datos/corregido/predicciones_xgboost_7.csv")
+
+
 ```
 
