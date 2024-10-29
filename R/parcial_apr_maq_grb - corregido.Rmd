@@ -164,6 +164,7 @@ estadisticas_vars_numericas_entrena |>
   
 
 ```
+
 # Procedemos a observar la correlación entre variables, eliminando las observaciones anormales del análisis previo. Vemos que `previous_cancellations` tiene varianza cero, por lo que se eliminará esta variable en la predicción. Vemos además que no hay correlaciones fuertes entre los predictores númericos
 
 ```{r}
@@ -406,57 +407,6 @@ ggplot(
   geom_bar()
 ```
 
-
-### 2.1.4 Correlación entre predictores
-
-Para eliminar colinealidad entre variables, checaremos el Factor de inflación de varianza (VIF) de los predictores númericos. Dicho factor lo calcularemos aplicando una regresión logística sobre los predictores númericos, eliminando las observaciones atípicas y con varianza cero mostradas en el numeral 2.1.1. Antes de aplicar el modelo logístico, procederemos a normalizar los predictores. Como podemos observar en la tabla, el VIF está debajo de 2 para todos los predictores, por lo que se usaran los nueve predictores en la aplicación de los modelos. 
-
-```{r}
-modelo_logistico_vif <- logistic_reg() |>
-  set_mode("classification") |>
-  set_engine("glm")
-
-
-receta_vif <- recipe(children ~ lead_time +
-    stays_in_weekend_nights +
-    stays_in_week_nights +
-    adults +
-    previous_cancellations +
-    previous_bookings_not_canceled +
-    booking_changes +
-    days_in_waiting_list +
-    average_daily_rate  +
-    total_of_special_requests, data = raw_train) |>
-  step_filter(
-    lead_time                      <= quantile(lead_time, probs=0.99),
-    stays_in_weekend_nights        <= quantile(stays_in_weekend_nights, probs=0.99),
-    stays_in_week_nights           <= quantile(stays_in_week_nights, probs=0.99),
-    previous_cancellations         <= quantile(previous_cancellations, probs=0.99),
-    previous_bookings_not_canceled <= quantile(previous_bookings_not_canceled, probs=0.99),
-    booking_changes                <= quantile(booking_changes, probs=0.99),
-    days_in_waiting_list           <= quantile(days_in_waiting_list, probs=0.99),
-    average_daily_rate             >  0
-  ) |>
-  step_rm(previous_cancellations) |>
-  step_normalize(all_predictors())
-
-flujo_logistico_vif <- workflow() |>
-  add_recipe(receta_vif) |>
-  add_model(modelo_logistico_vif)
-
-receta_preparada <- prep(receta_vif)
-prep_train <- bake(receta_preparada, new_data = NULL)
-
-# Entrenamos el modelo
-ajuste_logistico_vif <- flujo_logistico_vif |> 
-  fit(data = raw_train)
-
-# VIF
-tidy(vif(glm(children ~ ., data = prep_train, family = binomial))) |> rename(vif = x) |> gt()
-```
-
-
-
 # 3. Preprocesamiento inicial
 
 Con el análisis de la sección 2, podríamos conformar una receta de preprocesamiento inicial a los predictores aplicable a todos los modelos
@@ -524,8 +474,6 @@ receta_proprocesamiento_inicial <- recipe(children ~., raw_train) |>
 receta_inicial_preparada <- prep(receta_proprocesamiento_inicial)
 raw_train_2 <- bake(receta_inicial_preparada, new_data = NULL)
 ```
-
-
 
 # 4. Análisis exploratorio
 
@@ -1022,7 +970,7 @@ modelo_red_neuronal_2 <- keras_model_sequential() |>
 # Compilación
 modelo_red_neuronal_2 |> compile(
   loss = 'binary_crossentropy', # perdida logarítmica
-  optimizer = "adam", # Gradiente estocástico que se actualiza
+  optimizer = "adam", #Tasa de aprendizaje que se actualiza
   metrics = 'accuracy' # Para checar cuantas predicciones correctas hacemos
 )
 
@@ -1292,6 +1240,11 @@ log_loss_function(
 
 ### 4.4.3 Tercer intento
 
+Probaremos un preprocesamiento diferente. 
+
+ - PÉRDIDA LOGARÍTMICA DE PRUEBA: 0.13803
+
+
 ```{r}
 receta_proprocesamiento_inicial_2 <- recipe(children ~., raw_train) |>
   # Removemos columnas con valores faltantes
@@ -1423,6 +1376,11 @@ log_loss_function(
 ```
 
 ### 4.4.4 Cuarto intento
+
+Probamos el preprocesamiento del tercer intento, pero añadimos interacciones
+
+ - PÉRDIDA LOGARÍTMICA DE PRUEBA: Olvidé subir el archivo identificandolo bien.
+
 ```{r}
 set.seed(123) # para reproducibilidad
 
@@ -1504,6 +1462,7 @@ log_loss_function(
 ### 4.4.5 Quinto intento
 
 Usaremos el modelo de 4.4.3 realizando bagging
+ - PÉRDIDA LOGARÍTMICA DE PRUEBA: 0.13619
 
 ```{r}
 set.seed(123) # para reproducibilidad
@@ -1588,24 +1547,9 @@ preds_prom_boot_xgboost_1 |> mutate(id = 1:nrow(preds_prom_boot_xgboost_1)) |> s
 
 ### 4.4.6 Sexto intento
 
-```{r}
-aux <- raw_train |> select(children, arrival_date) |> mutate(arrival_date_year= year(arrival_date)) |>
-  summarise(n=n(), .by=c("children", "arrival_date_year")) |> filter(children=="children") |> mutate(prop_anio = n/sum(n)) |>
-  select(arrival_date_year, prop_anio)
+Probaremos un nuevo preprocesamiento.
 
-raw_train_x <- left_join(raw_train |> mutate(arrival_date_year=year(arrival_date)), aux, by="arrival_date_year")
-raw_test_x <- left_join(raw_test |> mutate(arrival_date_year=year(arrival_date)), aux, by="arrival_date_year")
-
-
-aux <- raw_train |> select(children, arrival_date) |> mutate(arrival_date_month= month(arrival_date)) |>
-  summarise(n=n(), .by=c("children", "arrival_date_month")) |> filter(children=="children") |> mutate(prop_mes = n/sum(n)) |>
-  select(arrival_date_month, prop_mes) |> arrange(prop_mes)
-
-raw_train_x <- left_join(raw_train_x |> mutate(arrival_date_month=month(arrival_date)), aux, by="arrival_date_month")
-raw_test_x <- left_join(raw_test_x |> mutate(arrival_date_month=month(arrival_date)), aux, by="arrival_date_month")
-
-  
-```
+ - PÉRDIDA LOGARÍTMICA DE PRUEBA: 0.13737
 
 
 ```{r}
@@ -1664,7 +1608,10 @@ raw_train_4 <- bake(receta_inicial_preparada_3, new_data = NULL)
 ```
 
 
+### 4.4.6 Séptimo intento
 
+Respecto al modelo 5, realizaremos bagging.
+ - PÉRDIDA LOGARÍTMICA DE PRUEBA: 0.13607
 
 ```{r}
 set.seed(123) # para reproducibilidad
